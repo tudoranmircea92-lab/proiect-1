@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-python3 coater_ui_v6_full_architecture/minimal_optimizer_gui.py

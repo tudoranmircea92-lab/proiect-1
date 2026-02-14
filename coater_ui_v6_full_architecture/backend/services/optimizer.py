@@ -3,58 +3,93 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
-import pandas as pd
 
-from .ml_feature_builder import detect_available_knobs
+@dataclass
+class KnobBound:
+    minimum: float
+    maximum: float
+    step: float
+    locked: bool = False
 
 
 @dataclass
-class OptimizerInput:
-    target: str
-    tolerance: float
-    mode: str
-    active_knobs: List[str]
-
-
-@dataclass
-class Solution:
+class Recommendation:
     rank: int
-    deltas: Dict[str, float]
-    predicted_target: float
-    risk: str
-    cost_per_plate: float
+    predicted_delta_a: float
+    predicted_delta_b: float
+    predicted_delta_e: float
+    tolerance_pass: bool
+    changes: List[Dict[str, float | str | bool]]
 
 
-class OptimizerService:
-    def __init__(self, top_k: int = 3):
-        self.top_k = top_k
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
 
-    def optimize(
+
+def _mean(rows: List[dict], key: str) -> float:
+    vals = []
+    for r in rows:
+        try:
+            vals.append(float(r.get(key, "")))
+        except Exception:
+            pass
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+class OptimizerEngine:
+    def build_recommendations(
         self,
-        df: pd.DataFrame,
-        model,
-        optimizer_input: OptimizerInput,
-    ) -> List[Solution]:
-        knobs = optimizer_input.active_knobs or detect_available_knobs(df.columns)
-        if not knobs:
+        subset: List[dict],
+        target_a: float,
+        target_b: float,
+        tolerance_de: float,
+        knob_bounds: Dict[str, KnobBound],
+        top_k: int = 3,
+    ) -> List[Recommendation]:
+        if not subset:
             return []
 
-        baseline = float(df[optimizer_input.target].mean()) if optimizer_input.target in df.columns and not df.empty else 0.0
-        pred = float(model.predict(pd.DataFrame([{}]))[0])
+        current_a = _mean(subset, "a_star_RG_mean")
+        current_b = _mean(subset, "b_star_RG_mean")
 
-        solutions: List[Solution] = []
-        step = 0.1 if optimizer_input.mode.upper() == "SAFE" else 0.3
+        recommendations: List[Recommendation] = []
+        unlocked_knobs = [k for k, b in knob_bounds.items() if not b.locked]
 
-        for i in range(self.top_k):
-            deltas = {k: round((i + 1) * step, 3) for k in knobs[:3]}
-            predicted_target = baseline + (pred - baseline) * 0.5
-            solutions.append(
-                Solution(
-                    rank=i + 1,
-                    deltas=deltas,
-                    predicted_target=round(predicted_target, 3),
-                    risk="low" if optimizer_input.mode.upper() == "SAFE" else "medium",
-                    cost_per_plate=round(sum(abs(v) for v in deltas.values()) * 0.2, 3),
+        for rank in range(1, top_k + 1):
+            changes: List[Dict[str, float | str | bool]] = []
+            step_scale = 1.0 + (rank - 1) * 0.5
+
+            for knob in unlocked_knobs[:8]:
+                bound = knob_bounds[knob]
+                old_value = _mean(subset, knob)
+                proposed = old_value + bound.step * step_scale
+                new_value = clamp(proposed, bound.minimum, bound.maximum)
+                changes.append(
+                    {
+                        "knob": knob,
+                        "old": round(old_value, 4),
+                        "new": round(new_value, 4),
+                        "delta": round(new_value - old_value, 4),
+                        "locked": bound.locked,
+                        "clamped": proposed != new_value,
+                    }
+                )
+
+            predicted_a = current_a + (target_a - current_a) * (0.35 + 0.2 * rank)
+            predicted_b = current_b + (target_b - current_b) * (0.35 + 0.2 * rank)
+            delta_a = predicted_a - current_a
+            delta_b = predicted_b - current_b
+            delta_e = (delta_a**2 + delta_b**2) ** 0.5
+
+            recommendations.append(
+                Recommendation(
+                    rank=rank,
+                    predicted_delta_a=round(delta_a, 4),
+                    predicted_delta_b=round(delta_b, 4),
+                    predicted_delta_e=round(delta_e, 4),
+                    tolerance_pass=delta_e <= tolerance_de,
+                    changes=changes,
                 )
             )
-        return solutions
+
+        return recommendations

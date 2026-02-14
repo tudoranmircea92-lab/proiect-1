@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from .routers.optimizer_routes import router as optimizer_router
 
 
-app = FastAPI(title="Coater UI v6 Backend", version="0.2.0")
+app = FastAPI(title="Industrial Web Optimizer", version="1.0.0")
 app.include_router(optimizer_router)
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"

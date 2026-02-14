@@ -3,123 +3,317 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Optimizer Minimal UI</title>
+  <title>Industrial Web Optimizer</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 24px; max-width: 860px; }
-    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    label { display: block; margin-top: 8px; font-weight: 600; }
-    input, select, textarea { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
-    button { margin-top: 12px; padding: 10px 16px; }
-    pre { background: #f7f7f7; padding: 12px; overflow: auto; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    :root { --bg:#f4f6f8; --card:#fff; --line:#d9dee3; --primary:#1c5d99; --ok:#1f7a1f; --warn:#a36d00; --bad:#a32020; }
+    body { margin:0; font-family: Segoe UI, Arial, sans-serif; background:var(--bg); color:#111; }
+    header { background:var(--primary); color:#fff; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; }
+    .layout { display:grid; grid-template-columns: 320px 1fr 390px; gap:12px; padding:12px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px; }
+    .title { font-size:14px; font-weight:700; margin:4px 0 8px; }
+    label { display:block; font-size:12px; font-weight:600; margin:6px 0 3px; }
+    input, select, button, textarea { width:100%; padding:7px; box-sizing:border-box; border:1px solid #c9ced6; border-radius:5px; }
+    button { cursor:pointer; background:#fff; }
+    .btn-primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+    .btn-row { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px; }
+    .small { font-size:12px; color:#555; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .knob-row { display:grid; grid-template-columns: 1.4fr 1fr 1fr 1fr auto; gap:6px; align-items:center; margin-bottom:6px; }
+    .badge { font-size:11px; padding:2px 5px; border-radius:4px; background:#eef2f7; }
+    .res-card { border:1px solid var(--line); border-radius:7px; padding:8px; margin-bottom:8px; }
+    .ok { color:var(--ok); font-weight:700; }
+    .bad { color:var(--bad); font-weight:700; }
+    #logs { height:220px; overflow:auto; background:#0f1720; color:#ddf; padding:8px; font-family:Consolas, monospace; font-size:12px; }
+    progress { width:100%; }
+    .tabbar { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+    .tab { border:1px solid var(--line); padding:5px 8px; border-radius:5px; background:#fff; cursor:pointer; }
+    .tab.active { background:#dbe8f6; border-color:#94b6d7; }
+    @media(max-width:1200px){ .layout{grid-template-columns:1fr;} }
   </style>
 </head>
 <body>
-  <h1>Coater Optimizer — Minimal UI</h1>
+<header>
+  <div><b>Industrial Web Optimizer</b> <span id="datasetStatus" class="badge">dataset: not loaded</span></div>
+  <div><span id="sessionInfo">session: local</span> | <span id="clock"></span></div>
+</header>
 
+<div class="layout">
   <div class="card">
-    <h3>Run Optimizer</h3>
-    <div class="row">
-      <div>
-        <label>Product</label>
-        <input id="product" value="P1" />
-      </div>
-      <div>
-        <label>Day (optional)</label>
-        <input id="day" placeholder="2026-01-01" />
-      </div>
-    </div>
-    <div class="row">
-      <div>
-        <label>Target</label>
-        <input id="target" value="a_star_RG_mean" />
-      </div>
-      <div>
-        <label>Tolerance</label>
-        <input id="tolerance" type="number" step="0.1" value="0.5" />
-      </div>
-    </div>
-    <div class="row">
-      <div>
-        <label>Mode</label>
-        <select id="mode">
-          <option>SAFE</option>
-          <option>AGGRESSIVE</option>
-        </select>
-      </div>
-      <div>
-        <label>Train new model</label>
-        <select id="train_new_model">
-          <option value="true">true</option>
-          <option value="false">false</option>
-        </select>
-      </div>
-    </div>
-    <label>Active knobs (comma separated, optional)</label>
-    <input id="active_knobs" placeholder="c4.pwr,c4.m1g,c4.s1g" />
+    <div class="title">Job Setup</div>
+    <label>Dataset path (local / UNC)</label>
+    <input id="datasetPath" value="data/dataset.csv" placeholder="\\\\server\\share\\dataset.csv" />
+    <button onclick="loadDataset()">Load dataset</button>
 
-    <button onclick="runOptimizer()">Run</button>
+    <div class="grid2">
+      <div><label>Date</label><input id="date" type="date" /></div>
+      <div><label>Plate</label><input id="plate" value="plate-001" /></div>
+    </div>
+
+    <label>Device</label>
+    <select id="device"></select>
+
+    <label>Compartments (Ctrl/Cmd multi-select)</label>
+    <select id="compartments" multiple size="5"></select>
+
+    <div class="grid2">
+      <div><label>Target L*</label><input id="targetL" type="number" value="0" step="0.1" /></div>
+      <div><label>Target a*</label><input id="targetA" type="number" value="0.2" step="0.1" /></div>
+    </div>
+    <div class="grid2">
+      <div><label>Target b*</label><input id="targetB" type="number" value="0.1" step="0.1" /></div>
+      <div><label>Tolerance ΔE max</label><input id="tolDE" type="number" value="1.0" step="0.1" /></div>
+    </div>
+
+    <div class="btn-row">
+      <button onclick="validateContext()">Validate</button>
+      <button class="btn-primary" onclick="startRun()">Run Optimizer</button>
+      <button onclick="cancelRun()">Cancel</button>
+      <button onclick="exportResult('xlsx')">Export XLSX</button>
+      <button onclick="exportResult('json')">Export JSON</button>
+      <button onclick="copyResult()">Copy result</button>
+    </div>
+    <div class="small" id="validation"></div>
   </div>
 
   <div class="card">
-    <h3>Verify Applied</h3>
-    <div class="row">
-      <div>
-        <label>Plate ID</label>
-        <input id="plate_id" value="plate-001" />
-      </div>
-      <div>
-        <label>Predicted</label>
-        <input id="predicted" type="number" step="0.001" value="0.2" />
-      </div>
+    <div class="title">Knobs Panel</div>
+    <input id="knobSearch" placeholder="Search knobs" oninput="renderKnobs()" />
+    <div class="tabbar" id="compTabs"></div>
+    <div id="knobList"></div>
+    <div class="btn-row">
+      <button onclick="resetKnobsToCurrent()">Reset to current</button>
+      <button onclick="downloadKnobSnapshot()">Export knob snapshot</button>
     </div>
-    <label>Realized</label>
-    <input id="realized" type="number" step="0.001" value="0.25" />
-    <button onclick="verifyApplied()">Verify</button>
   </div>
 
-  <div class="card">
-    <h3>Output</h3>
-    <pre id="output">Ready.</pre>
+  <div>
+    <div class="card">
+      <div class="title">Progress</div>
+      <progress id="progressBar" max="100" value="0"></progress>
+      <div id="progressText" class="small">idle</div>
+    </div>
+    <div class="card">
+      <div class="title">Top 3 Recommendations</div>
+      <div id="results">No results yet.</div>
+    </div>
+    <div class="card">
+      <div class="title">Logs</div>
+      <div id="logs"></div>
+    </div>
   </div>
+</div>
 
-  <script>
-    const output = document.getElementById('output');
+<script>
+let summary = null;
+let currentContextRows = [];
+let knobState = {};
+let currentComp = null;
+let runId = null;
+let pollTimer = null;
+let lastResult = null;
 
-    async function runOptimizer() {
-      const knobsRaw = document.getElementById('active_knobs').value.trim();
-      const payload = {
-        product: document.getElementById('product').value,
-        day: document.getElementById('day').value || null,
-        target: document.getElementById('target').value,
-        tolerance: Number(document.getElementById('tolerance').value),
-        mode: document.getElementById('mode').value,
-        train_new_model: document.getElementById('train_new_model').value === 'true',
-        active_knobs: knobsRaw ? knobsRaw.split(',').map(v => v.trim()).filter(Boolean) : []
-      };
-      const res = await fetch('/optimizer/run', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload)
-      });
-      const json = await res.json();
-      output.textContent = JSON.stringify(json, null, 2);
-    }
+const knobGroups = {
+  'Power/Electric': ['actPower','actPowerPMF','actCurrent','actCurrentIMF','actSigmaCurrent','actVoltage','actVoltageUMF','actSigmaVoltage','actArcRate1','actFreq','actHArc','actSArc','actSArcB'],
+  'Vacuum/Process': ['actVacuumPressure','nomProcessSpeed_mm','glassThickness','actTargetMaterial1'],
+  'Main gases': ['Ar_flow','N2_flow','O2_flow'],
+  'Segment gases': ['actSegGas'],
+  'Water/Cooling': ['actWaterFlowShielding','actWaterFlowSurround']
+};
 
-    async function verifyApplied() {
-      const payload = {
-        plate_id: document.getElementById('plate_id').value,
-        predicted: Number(document.getElementById('predicted').value),
-        realized: Number(document.getElementById('realized').value)
-      };
-      const res = await fetch('/optimizer/verify', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload)
-      });
-      const json = await res.json();
-      output.textContent = JSON.stringify(json, null, 2);
-    }
-  </script>
+function tickClock(){ document.getElementById('clock').textContent = new Date().toLocaleString(); }
+setInterval(tickClock,1000); tickClock();
+
+function selectedValues(sel){ return Array.from(sel.selectedOptions).map(o=>o.value); }
+
+async function loadDataset(){
+  const path = document.getElementById('datasetPath').value.trim();
+  const r = await fetch('/api/dataset/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
+  const j = await r.json();
+  if(!r.ok){ alert(j.error || 'load error'); return; }
+  summary = j.summary;
+  document.getElementById('datasetStatus').textContent = `dataset: ${summary.rows} rows`;
+
+  const deviceSel=document.getElementById('device'); deviceSel.innerHTML='';
+  (summary.devices.length?summary.devices:['']).forEach(d=>{ const o=document.createElement('option'); o.value=d;o.textContent=d||'(auto)'; deviceSel.appendChild(o);});
+
+  const compSel=document.getElementById('compartments'); compSel.innerHTML='';
+  summary.compartments.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;compSel.appendChild(o);});
+
+  const tabs=document.getElementById('compTabs'); tabs.innerHTML='';
+  summary.compartments.forEach((c,i)=>{const b=document.createElement('button');b.className='tab'+(i===0?' active':'');b.textContent=`${c}`;b.onclick=()=>{currentComp=c;Array.from(tabs.children).forEach(x=>x.classList.remove('active'));b.classList.add('active');renderKnobs();};tabs.appendChild(b);});
+  currentComp = summary.compartments[0] || null;
+
+  knobState = {};
+  (summary.columns||[]).forEach(col=>{
+    if(!col.includes('.')) return;
+    const [comp, name] = col.split('.',2);
+    if(!summary.compartments.includes(comp)) return;
+    knobState[col] = {value:0,min:-100000,max:100000,step:0.1,locked:false,current:0};
+    if(name.startsWith('actSegGas')) knobState[col].step = 0.05;
+  });
+  renderKnobs();
+}
+
+async function validateContext(){
+  const date=document.getElementById('date').value;
+  const plate=document.getElementById('plate').value;
+  const device=document.getElementById('device').value;
+  const q = new URLSearchParams({date,plate,device});
+  const r = await fetch('/api/context?'+q.toString());
+  const j = await r.json();
+  currentContextRows = j.rows || [];
+  document.getElementById('validation').textContent = (j.warnings||[]).join(' | ') || `Context OK (${currentContextRows.length} rows preview)`;
+  if(currentContextRows[0]){
+    Object.keys(knobState).forEach(k=>{
+      if(currentContextRows[0][k] !== undefined && currentContextRows[0][k] !== ''){
+        const v = Number(currentContextRows[0][k]);
+        if(!Number.isNaN(v)){ knobState[k].current=v; knobState[k].value=v; }
+      }
+    });
+    renderKnobs();
+  }
+}
+
+function groupForKnob(name){
+  for(const [g, arr] of Object.entries(knobGroups)){
+    if(arr.some(x => x==='actSegGas' ? name.startsWith('actSegGas') : name===x)) return g;
+  }
+  return 'Other';
+}
+
+function renderKnobs(){
+  const container = document.getElementById('knobList');
+  const query = document.getElementById('knobSearch').value.toLowerCase();
+  container.innerHTML='';
+  if(!currentComp){ container.textContent='No compartment selected'; return; }
+
+  const entries = Object.entries(knobState).filter(([k,v]) => k.startsWith(currentComp+'.') && k.toLowerCase().includes(query));
+  const groups = {};
+  entries.forEach(([k,v])=>{
+    const knobName = k.split('.',2)[1];
+    const grp = groupForKnob(knobName);
+    if(!groups[grp]) groups[grp]=[];
+    groups[grp].push([k,v]);
+  });
+
+  Object.keys(groups).forEach(grp=>{
+    const sec=document.createElement('details'); sec.open=true;
+    sec.innerHTML=`<summary><b>${grp}</b></summary>`;
+    groups[grp].forEach(([k,v])=>{
+      const r=document.createElement('div'); r.className='knob-row';
+      r.innerHTML=`<div>${k}<div class='small'>curr: ${v.current}</div></div>
+      <input type='number' value='${v.value}' step='${v.step}' onchange='updateKnob("${k}","value",this.value)'>
+      <input type='number' value='${v.min}' onchange='updateKnob("${k}","min",this.value)'>
+      <input type='number' value='${v.max}' onchange='updateKnob("${k}","max",this.value)'>
+      <label><input type='checkbox' ${v.locked?'checked':''} onchange='toggleLock("${k}",this.checked)'>LOCK</label>`;
+      sec.appendChild(r);
+    });
+    container.appendChild(sec);
+  });
+}
+
+function updateKnob(k, field, val){ knobState[k][field]=Number(val); }
+function toggleLock(k, checked){ knobState[k].locked=checked; }
+
+function resetKnobsToCurrent(){ Object.keys(knobState).forEach(k=>knobState[k].value = knobState[k].current); renderKnobs(); }
+
+function downloadKnobSnapshot(){
+  const blob = new Blob([JSON.stringify(knobState,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='knob_snapshot.json'; a.click();
+}
+
+async function startRun(){
+  const payload = {
+    date: document.getElementById('date').value,
+    plate: document.getElementById('plate').value,
+    device: document.getElementById('device').value || null,
+    compartments: selectedValues(document.getElementById('compartments')),
+    target: {
+      L: Number(document.getElementById('targetL').value),
+      a: Number(document.getElementById('targetA').value),
+      b: Number(document.getElementById('targetB').value)
+    },
+    tolerances: { deltaE: Number(document.getElementById('tolDE').value) },
+    knob_bounds: {}
+  };
+
+  Object.entries(knobState).forEach(([k,v])=>payload.knob_bounds[k]={min:v.min,max:v.max,step:v.step,locked:v.locked});
+
+  const r = await fetch('/api/run/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const j = await r.json();
+  if(!r.ok){ alert(j.error || 'start failed'); return; }
+  runId = j.run_id;
+  appendLog(`Run started: ${runId}`);
+
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollStatus, 800);
+}
+
+async function pollStatus(){
+  if(!runId) return;
+  const r = await fetch('/api/run/status/'+runId);
+  const j = await r.json();
+  document.getElementById('progressBar').value = j.progress || 0;
+  document.getElementById('progressText').textContent = `${j.state} | ${j.stage} | ${j.progress}%`;
+  (j.logs||[]).slice(-3).forEach(l=>appendLog(l));
+
+  if(['completed','failed','cancelled'].includes(j.state)){
+    clearInterval(pollTimer);
+    pollTimer = null;
+    await fetchResults();
+  }
+}
+
+async function cancelRun(){
+  if(!runId) return;
+  const r = await fetch('/api/run/cancel/'+runId,{method:'POST'});
+  const j = await r.json();
+  appendLog(JSON.stringify(j));
+}
+
+async function fetchResults(){
+  if(!runId) return;
+  const r = await fetch('/api/run/results/'+runId);
+  const j = await r.json();
+  lastResult = j;
+  renderResults(j.recommendations || []);
+}
+
+function renderResults(recs){
+  const box=document.getElementById('results');
+  if(!recs.length){ box.textContent='No recommendations'; return; }
+  box.innerHTML='';
+  recs.forEach(rec=>{
+    const card=document.createElement('div'); card.className='res-card';
+    const cls=rec.tolerance_pass?'ok':'bad';
+    card.innerHTML=`<div><b>#${rec.rank}</b> <span class='${cls}'>${rec.tolerance_pass?'PASS':'FAIL'}</span></div>
+      <div>Δa*: ${rec.predicted_delta_a} | Δb*: ${rec.predicted_delta_b} | ΔE: ${rec.predicted_delta_e}</div>
+      <button onclick='copyRec(${JSON.stringify(rec).replace(/'/g,"&#39;")})'>Copy this recommendation</button>`;
+
+    const tbl=document.createElement('div');
+    rec.changes.forEach(ch=>{
+      const row=document.createElement('div'); row.className='small';
+      row.textContent=`${ch.knob}: ${ch.old} -> ${ch.new} (Δ ${ch.delta})${ch.clamped?' [clamped]':''}`;
+      tbl.appendChild(row);
+    });
+    card.appendChild(tbl);
+    box.appendChild(card);
+  });
+}
+
+function copyRec(rec){ navigator.clipboard.writeText(JSON.stringify(rec,null,2)); }
+function copyResult(){ if(lastResult) navigator.clipboard.writeText(JSON.stringify(lastResult,null,2)); }
+
+async function exportResult(format){
+  if(!runId){ alert('No run_id'); return; }
+  window.open(`/api/run/export/${runId}?format=${format}`,'_blank');
+}
+
+function appendLog(msg){
+  const logs=document.getElementById('logs');
+  logs.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+  logs.scrollTop = logs.scrollHeight;
+}
+</script>
 </body>
 </html>

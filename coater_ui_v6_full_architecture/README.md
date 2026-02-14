@@ -1,43 +1,73 @@
-# coater_ui_v6_full_architecture
+# Industrial Web Optimizer
 
-FastAPI backend + minimal UI for Optimizer workflows.
+Web app for industrial optimizer workflows (LAN/factory PC), built with FastAPI + static SPA.
 
-## Structure
+## Features
 
-- `backend/app.py` — FastAPI app entrypoint + static UI serving
-- `backend/static/index.html` — minimalist web interface
-- `backend/config.py` + `backend/config.json` — runtime config loading
-- `backend/routers/optimizer_routes.py` — optimizer API endpoints (`/run`, `/verify`)
-- `backend/services/` — data, feature, train, optimizer, model registry services
-- `backend/utils/logging.py` — logger helper
-- `run_optimizer_app.py` — launcher that starts server and opens browser
-- `scripts/build_exe.sh` — builds one-file executable with PyInstaller
+- Load dataset from local path or UNC share (`\\server\share\file.csv`).
+- Select context: date, plate, device, compartments.
+- Configure targets (`L*`, `a*`, `b*`) + tolerance (`ΔE`).
+- Knobs panel grouped by compartment and category (power, gases, segment gases, vacuum/process, water).
+- Async optimization runs with progress polling + cancel endpoint.
+- Top 3 recommendations with knob deltas and predicted `Δa*`, `Δb*`, `ΔE`.
+- Audit artifacts per run in `artifacts/<YYYY-MM-DD>/<run_id>/`.
+- Export run results as XLSX/CSV/JSON.
+
+## API
+
+- `POST /api/dataset/load`
+- `GET /api/context`
+- `POST /api/run/start`
+- `GET /api/run/status/{run_id}`
+- `POST /api/run/cancel/{run_id}`
+- `GET /api/run/results/{run_id}`
+- `GET /api/run/export/{run_id}?format=xlsx|json|csv`
+
+## Prerequisites
+
+```bash
+python -m pip install -r coater_ui_v6_full_architecture/requirements.txt
+```
 
 ## Run locally
 
 ```bash
-python -m pip install -r coater_ui_v6_full_architecture/requirements.txt
-python coater_ui_v6_full_architecture/run_optimizer_app.py
+uvicorn coater_ui_v6_full_architecture.backend.app:app --host 0.0.0.0 --port 8000
 ```
 
-Then open `http://127.0.0.1:8000`.
+Open browser:
+- `http://localhost:8000`
 
-## Build executable
+## Windows helper scripts
 
-```bash
-bash coater_ui_v6_full_architecture/scripts/build_exe.sh
+- `coater_ui_v6_full_architecture/scripts/run_web_local.bat`
+- `coater_ui_v6_full_architecture/scripts/run_web_local.ps1`
+
+These scripts start the server on `0.0.0.0:8000` and open the browser.
+
+## UNC path usage
+
+In UI field **Dataset path**, use:
+
+```text
+\\server\share\dataset.csv
 ```
 
-Executable output:
-- `dist/coater_optimizer.exe`
+Then click **Load dataset**.
 
-> Note: the generated executable format depends on the build OS.
-> Building on Linux produces a Linux executable (even if named `.exe`).
-> For a native Windows `.exe`, run the build script on Windows.
+## Audit artifacts per run
 
-## Executabil inclus
+Each run writes:
 
-- `dist/coater_optimizer.exe` (launcher local)
-- Rulează direct: `./dist/coater_optimizer.exe`
+- `run_summary.json`
+- `recommendations.csv`
+- `recommendations.xlsx`
+- `recommendations.json`
+- `knob_changes.json`
+- `run_log.txt`
 
-Acest launcher deschide interfața GUI minimală (`tkinter`) fără dependințe externe.
+under `artifacts/<YYYY-MM-DD>/<run_id>/`.
+
+App-wide logs are in:
+
+- `logs/app.log`

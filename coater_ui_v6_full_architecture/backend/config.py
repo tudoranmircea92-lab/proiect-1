@@ -10,6 +10,7 @@ from typing import Any, Dict
 class AppConfig:
     dataset_path: str
     models_dir: str
+    artifacts_dir: str
     optimizer: Dict[str, Any]
 
 
@@ -22,5 +23,6 @@ def load_config(path: Path | None = None) -> AppConfig:
     return AppConfig(
         dataset_path=data.get("dataset_path", "./data/dataset.csv"),
         models_dir=data.get("models_dir", "./models"),
+        artifacts_dir=data.get("artifacts_dir", "./artifacts"),
         optimizer=data.get("optimizer", {}),
     )
