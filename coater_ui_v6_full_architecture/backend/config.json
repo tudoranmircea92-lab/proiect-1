@@ -1,0 +1,19 @@
+{
+  "dataset_path": "./data/dataset.csv",
+  "models_dir": "./models",
+  "optimizer": {
+    "default_mode": "SAFE",
+    "top_k_solutions": 3,
+    "candidate_pool_size": 20,
+    "allowed_knob_prefixes": ["pwr", "m1g", "m2g", "m3g", "s"],
+    "cost": {
+      "price_kwh": 0.15,
+      "price_gas": {
+        "m1g": 1.0,
+        "m2g": 1.0,
+        "m3g": 1.0,
+        "segment": 1.0
+      }
+    }
+  }
+}
