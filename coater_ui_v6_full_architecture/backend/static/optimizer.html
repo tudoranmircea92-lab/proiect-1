@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Industrial Optimizer</title>
+  <link rel="stylesheet" href="/static/optimizer.css" />
+</head>
+<body>
+  <header>
+    <div><h1>Industrial Web Optimizer</h1><div id="datasetStatus">dataset: not loaded</div></div>
+    <div class="status"><span id="serverHealth">health: -</span><span id="clock"></span></div>
+  </header>
+
+  <main class="grid">
+    <section class="panel" id="setupPanel">
+      <h2>Job Setup</h2>
+      <label>Dataset path</label><input id="datasetPath" value="data/dataset.csv" />
+      <button id="btnLoad">Load dataset</button>
+      <div id="datasetSummary" class="muted"></div>
+
+      <label>Product</label><select id="product"></select>
+      <label>Day</label><select id="day"></select>
+      <label>Plate (optional)</label><select id="plate"></select>
+
+      <label>Target</label><select id="target"></select>
+      <label>Tolerance (0.1)</label><input id="tolerance" type="number" step="0.1" value="1.0" />
+
+      <div class="row">
+        <div><label>Mode</label><select id="mode"><option>SAFE</option><option>AGGRESSIVE</option></select></div>
+        <div><label>Model</label><select id="modelMode"><option value="train">Train new</option><option value="existing">Use existing</option></select></div>
+      </div>
+
+      <h3>Cost Inputs</h3>
+      <div class="row">
+        <div><label>Price kWh</label><input id="priceKwh" type="number" step="0.01" value="0.15" /></div>
+        <div><label>Price gas</label><input id="priceGas" type="number" step="0.01" value="1.0" /></div>
+      </div>
+
+      <button id="btnRun">RUN OPTIMIZER</button>
+    </section>
+
+    <section class="panel" id="knobsPanel">
+      <h2>Knobs</h2>
+      <input id="knobSearch" placeholder="Search knob" />
+      <div id="knobGroups"></div>
+    </section>
+
+    <section class="panel" id="resultsPanel">
+      <h2>Results</h2>
+      <div class="chartWrap"><h3>Current State</h3><svg id="chartCurrent"></svg></div>
+      <div class="chartWrap"><h3>Optimized Result</h3><svg id="chartOptimized"></svg></div>
+
+      <h3>Parameter Changes</h3>
+      <table id="changesTable"><thead><tr><th>Compartment</th><th>Knob</th><th>Current</th><th>Proposed</th><th>Delta</th><th>%</th></tr></thead><tbody></tbody></table>
+
+      <h3>Cost and Savings</h3>
+      <div id="costCards" class="cards"></div>
+
+      <h3>Top 3 Solutions</h3>
+      <div id="solutions"></div>
+
+      <h3>Apply and Verify</h3>
+      <div class="row">
+        <div><label>Applied plate id</label><input id="verifyPlate" /></div>
+        <div><button id="btnVerify">VERIFY</button></div>
+      </div>
+      <div class="chartWrap"><svg id="chartVerify"></svg></div>
+      <div id="verifyMetrics" class="muted"></div>
+    </section>
+  </main>
+
+  <script src="/static/optimizer.js"></script>
+</body>
+</html>
