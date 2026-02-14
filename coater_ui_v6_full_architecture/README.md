@@ -1,73 +1,73 @@
-# Industrial Web Optimizer
+# Industrial Web Optimizer v2
 
-Web app for industrial optimizer workflows (LAN/factory PC), built with FastAPI + static SPA.
+Production-oriented internal web optimizer for factory usage (LAN / Chrome / Edge).
 
-## Features
+## What is included
 
-- Load dataset from local path or UNC share (`\\server\share\file.csv`).
-- Select context: date, plate, device, compartments.
-- Configure targets (`L*`, `a*`, `b*`) + tolerance (`ΔE`).
-- Knobs panel grouped by compartment and category (power, gases, segment gases, vacuum/process, water).
-- Async optimization runs with progress polling + cancel endpoint.
-- Top 3 recommendations with knob deltas and predicted `Δa*`, `Δb*`, `ΔE`.
-- Audit artifacts per run in `artifacts/<YYYY-MM-DD>/<run_id>/`.
-- Export run results as XLSX/CSV/JSON.
+- Dataset loading from `.parquet` (primary) and `.csv` (fallback), local or UNC paths.
+- Dataset summary: rows, columns, date range/count, devices, compartments, plates count, segment count.
+- Column normalization for date/device/plate/compartments.
+- Config-driven knob groups/rules from `config/knob_rules.json`.
+- Async run manager with progress stages, cancellation, and run history.
+- Per-run audit artifacts under `artifacts/YYYY-MM-DD/<run_id>/`.
+- Export API for XLSX/CSV/JSON.
+- Health endpoint and rotating app logs.
 
 ## API
 
+- `GET /api/health`
+- `GET /api/config/knob-rules`
 - `POST /api/dataset/load`
-- `GET /api/context`
+- `GET /api/context?date=...&plate=...&device=...&strategy=latest|mean`
 - `POST /api/run/start`
 - `GET /api/run/status/{run_id}`
 - `POST /api/run/cancel/{run_id}`
 - `GET /api/run/results/{run_id}`
-- `GET /api/run/export/{run_id}?format=xlsx|json|csv`
+- `GET /api/run/history`
+- `GET /api/run/export/{run_id}?format=xlsx|csv|json`
 
-## Prerequisites
+## Install
 
 ```bash
 python -m pip install -r coater_ui_v6_full_architecture/requirements.txt
 ```
 
-## Run locally
+For parquet support install pandas + pyarrow in your environment.
+
+## Run
 
 ```bash
 uvicorn coater_ui_v6_full_architecture.backend.app:app --host 0.0.0.0 --port 8000
 ```
 
-Open browser:
-- `http://localhost:8000`
+Open `http://localhost:8000`.
 
-## Windows helper scripts
+## Windows scripts
 
 - `coater_ui_v6_full_architecture/scripts/run_web_local.bat`
 - `coater_ui_v6_full_architecture/scripts/run_web_local.ps1`
 
-These scripts start the server on `0.0.0.0:8000` and open the browser.
+## Config
 
-## UNC path usage
+- `coater_ui_v6_full_architecture/config/knob_rules.json`
 
-In UI field **Dataset path**, use:
+Defines group ordering, wildcard group assignment, and default min/max/step/unit per knob.
 
-```text
-\\server\share\dataset.csv
-```
+## Artifacts per run
 
-Then click **Load dataset**.
+Saved in:
 
-## Audit artifacts per run
+- `artifacts/<YYYY-MM-DD>/<run_id>/`
 
-Each run writes:
+Files:
 
 - `run_summary.json`
+- `recommendations.json`
 - `recommendations.csv`
 - `recommendations.xlsx`
-- `recommendations.json`
 - `knob_changes.json`
 - `run_log.txt`
 
-under `artifacts/<YYYY-MM-DD>/<run_id>/`.
-
-App-wide logs are in:
+Global logs:
 
 - `logs/app.log`

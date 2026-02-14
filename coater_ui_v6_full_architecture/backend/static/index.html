@@ -1,319 +1,71 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Industrial Web Optimizer</title>
-  <style>
-    :root { --bg:#f4f6f8; --card:#fff; --line:#d9dee3; --primary:#1c5d99; --ok:#1f7a1f; --warn:#a36d00; --bad:#a32020; }
-    body { margin:0; font-family: Segoe UI, Arial, sans-serif; background:var(--bg); color:#111; }
-    header { background:var(--primary); color:#fff; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; }
-    .layout { display:grid; grid-template-columns: 320px 1fr 390px; gap:12px; padding:12px; }
-    .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px; }
-    .title { font-size:14px; font-weight:700; margin:4px 0 8px; }
-    label { display:block; font-size:12px; font-weight:600; margin:6px 0 3px; }
-    input, select, button, textarea { width:100%; padding:7px; box-sizing:border-box; border:1px solid #c9ced6; border-radius:5px; }
-    button { cursor:pointer; background:#fff; }
-    .btn-primary { background:var(--primary); color:#fff; border-color:var(--primary); }
-    .btn-row { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px; }
-    .small { font-size:12px; color:#555; }
-    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-    .knob-row { display:grid; grid-template-columns: 1.4fr 1fr 1fr 1fr auto; gap:6px; align-items:center; margin-bottom:6px; }
-    .badge { font-size:11px; padding:2px 5px; border-radius:4px; background:#eef2f7; }
-    .res-card { border:1px solid var(--line); border-radius:7px; padding:8px; margin-bottom:8px; }
-    .ok { color:var(--ok); font-weight:700; }
-    .bad { color:var(--bad); font-weight:700; }
-    #logs { height:220px; overflow:auto; background:#0f1720; color:#ddf; padding:8px; font-family:Consolas, monospace; font-size:12px; }
-    progress { width:100%; }
-    .tabbar { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
-    .tab { border:1px solid var(--line); padding:5px 8px; border-radius:5px; background:#fff; cursor:pointer; }
-    .tab.active { background:#dbe8f6; border-color:#94b6d7; }
-    @media(max-width:1200px){ .layout{grid-template-columns:1fr;} }
-  </style>
-</head>
-<body>
-<header>
-  <div><b>Industrial Web Optimizer</b> <span id="datasetStatus" class="badge">dataset: not loaded</span></div>
-  <div><span id="sessionInfo">session: local</span> | <span id="clock"></span></div>
-</header>
-
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Industrial Web Optimizer v2</title>
+<style>
+body{margin:0;font-family:Segoe UI,Arial;background:#f3f5f7}header{background:#1f4f7a;color:#fff;padding:8px 12px;display:flex;justify-content:space-between}
+.layout{display:grid;grid-template-columns:330px 1fr 420px;gap:10px;padding:10px}.card{background:#fff;border:1px solid #d9dee3;border-radius:8px;padding:9px}
+label{font-size:12px;font-weight:700;display:block;margin-top:5px}input,select,button,textarea{width:100%;padding:6px;box-sizing:border-box}button{cursor:pointer}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}.tabs button{width:auto;margin-right:5px}.log{height:160px;overflow:auto;background:#0d1620;color:#cde;padding:6px;font-family:Consolas}
+.knob{display:grid;grid-template-columns:1.7fr .9fr .8fr .8fr .8fr auto;gap:4px;align-items:center;border-bottom:1px solid #eee;padding:3px 0}.small{font-size:12px;color:#555}
+.ok{color:#1d7c1d;font-weight:700}.bad{color:#a11d1d;font-weight:700}
+@media(max-width:1200px){.layout{grid-template-columns:1fr}}
+</style></head><body>
+<header><div><b>Industrial Web Optimizer v2</b> | <span id="status">dataset: not loaded</span> | <span id="path"></span></div><div>session: <span id="sid"></span> | health: <span id="health">...</span></div></header>
 <div class="layout">
-  <div class="card">
-    <div class="title">Job Setup</div>
-    <label>Dataset path (local / UNC)</label>
-    <input id="datasetPath" value="data/dataset.csv" placeholder="\\\\server\\share\\dataset.csv" />
-    <button onclick="loadDataset()">Load dataset</button>
-
-    <div class="grid2">
-      <div><label>Date</label><input id="date" type="date" /></div>
-      <div><label>Plate</label><input id="plate" value="plate-001" /></div>
-    </div>
-
-    <label>Device</label>
-    <select id="device"></select>
-
-    <label>Compartments (Ctrl/Cmd multi-select)</label>
-    <select id="compartments" multiple size="5"></select>
-
-    <div class="grid2">
-      <div><label>Target L*</label><input id="targetL" type="number" value="0" step="0.1" /></div>
-      <div><label>Target a*</label><input id="targetA" type="number" value="0.2" step="0.1" /></div>
-    </div>
-    <div class="grid2">
-      <div><label>Target b*</label><input id="targetB" type="number" value="0.1" step="0.1" /></div>
-      <div><label>Tolerance ΔE max</label><input id="tolDE" type="number" value="1.0" step="0.1" /></div>
-    </div>
-
-    <div class="btn-row">
-      <button onclick="validateContext()">Validate</button>
-      <button class="btn-primary" onclick="startRun()">Run Optimizer</button>
-      <button onclick="cancelRun()">Cancel</button>
-      <button onclick="exportResult('xlsx')">Export XLSX</button>
-      <button onclick="exportResult('json')">Export JSON</button>
-      <button onclick="copyResult()">Copy result</button>
-    </div>
-    <div class="small" id="validation"></div>
-  </div>
-
-  <div class="card">
-    <div class="title">Knobs Panel</div>
-    <input id="knobSearch" placeholder="Search knobs" oninput="renderKnobs()" />
-    <div class="tabbar" id="compTabs"></div>
-    <div id="knobList"></div>
-    <div class="btn-row">
-      <button onclick="resetKnobsToCurrent()">Reset to current</button>
-      <button onclick="downloadKnobSnapshot()">Export knob snapshot</button>
-    </div>
-  </div>
-
-  <div>
-    <div class="card">
-      <div class="title">Progress</div>
-      <progress id="progressBar" max="100" value="0"></progress>
-      <div id="progressText" class="small">idle</div>
-    </div>
-    <div class="card">
-      <div class="title">Top 3 Recommendations</div>
-      <div id="results">No results yet.</div>
-    </div>
-    <div class="card">
-      <div class="title">Logs</div>
-      <div id="logs"></div>
-    </div>
-  </div>
+<div class="card"><h3>Job Setup</h3>
+<label>Dataset path (.parquet/.csv, local/UNC)</label><input id="datasetPath" value="data/dataset.csv"><button onclick="loadDataset()">Load</button>
+<div id="summary" class="small"></div>
+<div class="grid2"><div><label>Date</label><input id="dateSearch" placeholder="type to filter" oninput="filterDate()"><select id="date"></select></div><div><label>Plate</label><input id="plateSearch" placeholder="type to filter" oninput="filterPlate()"><select id="plate"></select></div></div>
+<label>Device</label><select id="device"></select>
+<label>Compartments</label><select id="compartments" multiple size="6"></select><button onclick="selectAllComps()">Select all</button>
+<div class="grid2"><div><label>Target L*</label><input id="targetL" type="number" value="0"></div><div><label>Target a*</label><input id="targetA" type="number" value="0.2"></div></div>
+<div class="grid2"><div><label>Target b*</label><input id="targetB" type="number" value="0.1"></div><div><label>ΔE max</label><input id="tolDE" type="number" step="0.1" value="1.0"></div></div>
+<div class="grid2"><button onclick="validateContext()">Validate</button><button onclick="startRun()">Run</button><button onclick="cancelRun()">Cancel</button><button onclick="exportRes('xlsx')">Export XLSX</button><button onclick="exportRes('json')">Export JSON</button><button onclick="exportRes('csv')">Export CSV</button><button onclick="copyResult()">Copy result</button></div>
+<h4>Current Context</h4><select id="ctxStrategy"><option value="latest">latest timestamp</option><option value="mean">aggregate mean</option></select><pre id="context" class="small"></pre>
 </div>
-
+<div class="card"><h3>Knobs</h3><input id="knobSearch" placeholder="search" oninput="renderKnobs()"><div class="tabs" id="tabs"></div>
+<div><button onclick="resetAll()">Reset all to current</button> <button onclick="lockAll(true)">Lock all</button> <button onclick="lockAll(false)">Unlock all</button> <button onclick="exportKnobs()">Export snapshot</button></div>
+<div id="knobs"></div></div>
+<div>
+<div class="card"><h3>Run + Progress</h3><progress id="prog" max="100" value="0" style="width:100%"></progress><div id="stage" class="small">idle</div><div id="logs" class="log"></div></div>
+<div class="card"><h3>Top 3 Results</h3><div id="results">No results.</div></div>
+<div class="card"><h3>Run History</h3><div id="history" class="small"></div></div>
+</div></div>
 <script>
-let summary = null;
-let currentContextRows = [];
-let knobState = {};
-let currentComp = null;
-let runId = null;
-let pollTimer = null;
-let lastResult = null;
-
-const knobGroups = {
-  'Power/Electric': ['actPower','actPowerPMF','actCurrent','actCurrentIMF','actSigmaCurrent','actVoltage','actVoltageUMF','actSigmaVoltage','actArcRate1','actFreq','actHArc','actSArc','actSArcB'],
-  'Vacuum/Process': ['actVacuumPressure','nomProcessSpeed_mm','glassThickness','actTargetMaterial1'],
-  'Main gases': ['Ar_flow','N2_flow','O2_flow'],
-  'Segment gases': ['actSegGas'],
-  'Water/Cooling': ['actWaterFlowShielding','actWaterFlowSurround']
-};
-
-function tickClock(){ document.getElementById('clock').textContent = new Date().toLocaleString(); }
-setInterval(tickClock,1000); tickClock();
-
-function selectedValues(sel){ return Array.from(sel.selectedOptions).map(o=>o.value); }
-
-async function loadDataset(){
-  const path = document.getElementById('datasetPath').value.trim();
-  const r = await fetch('/api/dataset/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
-  const j = await r.json();
-  if(!r.ok){ alert(j.error || 'load error'); return; }
-  summary = j.summary;
-  document.getElementById('datasetStatus').textContent = `dataset: ${summary.rows} rows`;
-
-  const deviceSel=document.getElementById('device'); deviceSel.innerHTML='';
-  (summary.devices.length?summary.devices:['']).forEach(d=>{ const o=document.createElement('option'); o.value=d;o.textContent=d||'(auto)'; deviceSel.appendChild(o);});
-
-  const compSel=document.getElementById('compartments'); compSel.innerHTML='';
-  summary.compartments.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;compSel.appendChild(o);});
-
-  const tabs=document.getElementById('compTabs'); tabs.innerHTML='';
-  summary.compartments.forEach((c,i)=>{const b=document.createElement('button');b.className='tab'+(i===0?' active':'');b.textContent=`${c}`;b.onclick=()=>{currentComp=c;Array.from(tabs.children).forEach(x=>x.classList.remove('active'));b.classList.add('active');renderKnobs();};tabs.appendChild(b);});
-  currentComp = summary.compartments[0] || null;
-
-  knobState = {};
-  (summary.columns||[]).forEach(col=>{
-    if(!col.includes('.')) return;
-    const [comp, name] = col.split('.',2);
-    if(!summary.compartments.includes(comp)) return;
-    knobState[col] = {value:0,min:-100000,max:100000,step:0.1,locked:false,current:0};
-    if(name.startsWith('actSegGas')) knobState[col].step = 0.05;
-  });
-  renderKnobs();
-}
-
-async function validateContext(){
-  const date=document.getElementById('date').value;
-  const plate=document.getElementById('plate').value;
-  const device=document.getElementById('device').value;
-  const q = new URLSearchParams({date,plate,device});
-  const r = await fetch('/api/context?'+q.toString());
-  const j = await r.json();
-  currentContextRows = j.rows || [];
-  document.getElementById('validation').textContent = (j.warnings||[]).join(' | ') || `Context OK (${currentContextRows.length} rows preview)`;
-  if(currentContextRows[0]){
-    Object.keys(knobState).forEach(k=>{
-      if(currentContextRows[0][k] !== undefined && currentContextRows[0][k] !== ''){
-        const v = Number(currentContextRows[0][k]);
-        if(!Number.isNaN(v)){ knobState[k].current=v; knobState[k].value=v; }
-      }
-    });
-    renderKnobs();
-  }
-}
-
-function groupForKnob(name){
-  for(const [g, arr] of Object.entries(knobGroups)){
-    if(arr.some(x => x==='actSegGas' ? name.startsWith('actSegGas') : name===x)) return g;
-  }
-  return 'Other';
-}
-
-function renderKnobs(){
-  const container = document.getElementById('knobList');
-  const query = document.getElementById('knobSearch').value.toLowerCase();
-  container.innerHTML='';
-  if(!currentComp){ container.textContent='No compartment selected'; return; }
-
-  const entries = Object.entries(knobState).filter(([k,v]) => k.startsWith(currentComp+'.') && k.toLowerCase().includes(query));
-  const groups = {};
-  entries.forEach(([k,v])=>{
-    const knobName = k.split('.',2)[1];
-    const grp = groupForKnob(knobName);
-    if(!groups[grp]) groups[grp]=[];
-    groups[grp].push([k,v]);
-  });
-
-  Object.keys(groups).forEach(grp=>{
-    const sec=document.createElement('details'); sec.open=true;
-    sec.innerHTML=`<summary><b>${grp}</b></summary>`;
-    groups[grp].forEach(([k,v])=>{
-      const r=document.createElement('div'); r.className='knob-row';
-      r.innerHTML=`<div>${k}<div class='small'>curr: ${v.current}</div></div>
-      <input type='number' value='${v.value}' step='${v.step}' onchange='updateKnob("${k}","value",this.value)'>
-      <input type='number' value='${v.min}' onchange='updateKnob("${k}","min",this.value)'>
-      <input type='number' value='${v.max}' onchange='updateKnob("${k}","max",this.value)'>
-      <label><input type='checkbox' ${v.locked?'checked':''} onchange='toggleLock("${k}",this.checked)'>LOCK</label>`;
-      sec.appendChild(r);
-    });
-    container.appendChild(sec);
-  });
-}
-
-function updateKnob(k, field, val){ knobState[k][field]=Number(val); }
-function toggleLock(k, checked){ knobState[k].locked=checked; }
-
-function resetKnobsToCurrent(){ Object.keys(knobState).forEach(k=>knobState[k].value = knobState[k].current); renderKnobs(); }
-
-function downloadKnobSnapshot(){
-  const blob = new Blob([JSON.stringify(knobState,null,2)],{type:'application/json'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='knob_snapshot.json'; a.click();
-}
-
-async function startRun(){
-  const payload = {
-    date: document.getElementById('date').value,
-    plate: document.getElementById('plate').value,
-    device: document.getElementById('device').value || null,
-    compartments: selectedValues(document.getElementById('compartments')),
-    target: {
-      L: Number(document.getElementById('targetL').value),
-      a: Number(document.getElementById('targetA').value),
-      b: Number(document.getElementById('targetB').value)
-    },
-    tolerances: { deltaE: Number(document.getElementById('tolDE').value) },
-    knob_bounds: {}
-  };
-
-  Object.entries(knobState).forEach(([k,v])=>payload.knob_bounds[k]={min:v.min,max:v.max,step:v.step,locked:v.locked});
-
-  const r = await fetch('/api/run/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  const j = await r.json();
-  if(!r.ok){ alert(j.error || 'start failed'); return; }
-  runId = j.run_id;
-  appendLog(`Run started: ${runId}`);
-
-  if(pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(pollStatus, 800);
-}
-
-async function pollStatus(){
-  if(!runId) return;
-  const r = await fetch('/api/run/status/'+runId);
-  const j = await r.json();
-  document.getElementById('progressBar').value = j.progress || 0;
-  document.getElementById('progressText').textContent = `${j.state} | ${j.stage} | ${j.progress}%`;
-  (j.logs||[]).slice(-3).forEach(l=>appendLog(l));
-
-  if(['completed','failed','cancelled'].includes(j.state)){
-    clearInterval(pollTimer);
-    pollTimer = null;
-    await fetchResults();
-  }
-}
-
-async function cancelRun(){
-  if(!runId) return;
-  const r = await fetch('/api/run/cancel/'+runId,{method:'POST'});
-  const j = await r.json();
-  appendLog(JSON.stringify(j));
-}
-
-async function fetchResults(){
-  if(!runId) return;
-  const r = await fetch('/api/run/results/'+runId);
-  const j = await r.json();
-  lastResult = j;
-  renderResults(j.recommendations || []);
-}
-
-function renderResults(recs){
-  const box=document.getElementById('results');
-  if(!recs.length){ box.textContent='No recommendations'; return; }
-  box.innerHTML='';
-  recs.forEach(rec=>{
-    const card=document.createElement('div'); card.className='res-card';
-    const cls=rec.tolerance_pass?'ok':'bad';
-    card.innerHTML=`<div><b>#${rec.rank}</b> <span class='${cls}'>${rec.tolerance_pass?'PASS':'FAIL'}</span></div>
-      <div>Δa*: ${rec.predicted_delta_a} | Δb*: ${rec.predicted_delta_b} | ΔE: ${rec.predicted_delta_e}</div>
-      <button onclick='copyRec(${JSON.stringify(rec).replace(/'/g,"&#39;")})'>Copy this recommendation</button>`;
-
-    const tbl=document.createElement('div');
-    rec.changes.forEach(ch=>{
-      const row=document.createElement('div'); row.className='small';
-      row.textContent=`${ch.knob}: ${ch.old} -> ${ch.new} (Δ ${ch.delta})${ch.clamped?' [clamped]':''}`;
-      tbl.appendChild(row);
-    });
-    card.appendChild(tbl);
-    box.appendChild(card);
-  });
-}
-
-function copyRec(rec){ navigator.clipboard.writeText(JSON.stringify(rec,null,2)); }
-function copyResult(){ if(lastResult) navigator.clipboard.writeText(JSON.stringify(lastResult,null,2)); }
-
-async function exportResult(format){
-  if(!runId){ alert('No run_id'); return; }
-  window.open(`/api/run/export/${runId}?format=${format}`,'_blank');
-}
-
-function appendLog(msg){
-  const logs=document.getElementById('logs');
-  logs.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
-  logs.scrollTop = logs.scrollHeight;
-}
-</script>
-</body>
-</html>
+let sid=Math.random().toString(36).slice(2,10);document.getElementById('sid').textContent=sid;
+let summary=null, rules=null, knobs={}, currentComp=null, runId=null, timer=null, last=null, allDates=[], allPlates=[];
+async function ping(){let r=await fetch('/api/health');let j=await r.json();document.getElementById('health').textContent=j.status+` runs:${j.run_count}`;} setInterval(ping,2000); ping();
+async function loadRules(){let r=await fetch('/api/config/knob-rules');rules=await r.json();} loadRules();
+function norm(v){return (v||'').toString().toLowerCase()}
+function matchAny(s,pats){return pats.some(p=>{let re='^'+p.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\\\*/g,'.*')+'$';return new RegExp(re,'i').test(s)})}
+function groupFor(k){for(const [g,p] of Object.entries(rules.group_rules||{})){if(matchAny(k.toLowerCase(),p.map(x=>x.toLowerCase()))) return g;} return 'Other'}
+function boundsFor(k){let out=(rules.defaults||{})['*']||{min:-1e6,max:1e6,step:0.1,unit:'unitless'};for(const [p,c] of Object.entries(rules.defaults||{})){if(p==='*')continue; if(matchAny(k.toLowerCase(),[p.toLowerCase()])) out={...out,...c}} return out}
+async function loadDataset(){let path=document.getElementById('datasetPath').value.trim();let r=await fetch('/api/dataset/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});let j=await r.json();if(!r.ok){alert(j.error);return;}summary=j.summary;document.getElementById('status').textContent=`rows:${summary.rows}`;document.getElementById('path').textContent=summary.dataset_path;document.getElementById('summary').textContent=`dates ${summary.date_min}..${summary.date_max} (${summary.date_count}), devices ${summary.devices.length}, comps ${summary.compartments.length}, plates ${summary.plates_count}, segments ${summary.segment_count}`;
+allDates=summary.dates||[]; fillSelect('date',allDates); allPlates=[];
+fillSelect('device',['',...(summary.devices||[])]); fillSelect('compartments',summary.compartments||[]);
+const tabs=document.getElementById('tabs');tabs.innerHTML='';(summary.compartments||[]).forEach((c,i)=>{let b=document.createElement('button');b.textContent=c;b.onclick=()=>{currentComp=c;renderTabs();renderKnobs()};if(i===0)currentComp=c;tabs.appendChild(b)}); renderTabs();
+knobs={}; (summary.columns||[]).forEach(c=>{if(!(c.startsWith('c')&&c.includes('.'))) return; let b=boundsFor(c);knobs[c]={current:0,value:0,min:b.min,max:b.max,step:b.step,unit:b.unit,locked:false,group:groupFor(c)};}); renderKnobs(); validateContext();}
+function fillSelect(id,arr){let s=document.getElementById(id);s.innerHTML='';arr.forEach(v=>{let o=document.createElement('option');o.value=v;o.textContent=v||'(auto)';s.appendChild(o)})}
+function filterDate(){let q=norm(document.getElementById('dateSearch').value);fillSelect('date',allDates.filter(x=>norm(x).includes(q)))}
+function filterPlate(){let q=norm(document.getElementById('plateSearch').value);fillSelect('plate',allPlates.filter(x=>norm(x).includes(q)))}
+function selected(sel){return Array.from(sel.selectedOptions).map(o=>o.value)}
+function selectAllComps(){let s=document.getElementById('compartments');Array.from(s.options).forEach(o=>o.selected=true)}
+async function validateContext(){if(!summary)return;let qs=new URLSearchParams({date:document.getElementById('date').value,plate:document.getElementById('plate').value,device:document.getElementById('device').value,strategy:document.getElementById('ctxStrategy').value});let r=await fetch('/api/context?'+qs.toString());let j=await r.json();document.getElementById('context').textContent=JSON.stringify(j,null,2);let row=(j.rows||[])[0]||{};Object.keys(knobs).forEach(k=>{let v=Number(row[k]);if(!Number.isNaN(v)){knobs[k].current=v;knobs[k].value=v}});
+allPlates=[...new Set((j.rows||[]).map(x=>x.plate_id).filter(Boolean))];if(allPlates.length) fillSelect('plate',allPlates);
+renderKnobs();}
+function renderTabs(){Array.from(document.getElementById('tabs').children).forEach(b=>b.style.background=b.textContent===currentComp?'#dbe8f7':'#fff')}
+function renderKnobs(){let q=norm(document.getElementById('knobSearch').value);let box=document.getElementById('knobs');box.innerHTML='';if(!currentComp)return;let entries=Object.entries(knobs).filter(([k,v])=>k.startsWith(currentComp+'.')&&norm(k).includes(q));entries.sort((a,b)=>(a[1].group+a[0]).localeCompare(b[1].group+b[0]));entries.forEach(([k,v])=>{let changed=Math.abs(Number(v.value)-Number(v.current))>1e-9;let r=document.createElement('div');r.className='knob';r.innerHTML=`<div><b>${k}</b><div class='small'>${v.group} | ${v.unit}</div></div><div>${v.current}</div><input type='number' value='${v.value}' step='${v.step}' onchange='upd("${k}","value",this.value)'><input type='number' value='${v.min}' onchange='upd("${k}","min",this.value)'><input type='number' value='${v.max}' onchange='upd("${k}","max",this.value)'><label><input type='checkbox' ${v.locked?'checked':''} onchange='lock("${k}",this.checked)'>LOCK</label>`;if(changed) r.style.background='#fff8df';box.appendChild(r);});}
+function upd(k,f,v){knobs[k][f]=Number(v)} function lock(k,v){knobs[k].locked=v}
+function resetAll(){Object.keys(knobs).forEach(k=>knobs[k].value=knobs[k].current);renderKnobs()} function lockAll(v){Object.keys(knobs).forEach(k=>knobs[k].locked=v);renderKnobs()}
+function exportKnobs(){let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(knobs,null,2)],{type:'application/json'}));a.download='knob_snapshot.json';a.click()}
+async function startRun(){let payload={date:document.getElementById('date').value,plate:document.getElementById('plate').value,device:document.getElementById('device').value||null,compartments:selected(document.getElementById('compartments')),target:{L:Number(document.getElementById('targetL').value),a:Number(document.getElementById('targetA').value),b:Number(document.getElementById('targetB').value)},tolerances:{deltaE:Number(document.getElementById('tolDE').value)},knob_bounds:{}};Object.entries(knobs).forEach(([k,v])=>payload.knob_bounds[k]={min:v.min,max:v.max,step:v.step,locked:v.locked});let r=await fetch('/api/run/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let j=await r.json();if(!r.ok){alert(j.error||'start failed');return;}runId=j.run_id;log('run started '+runId);if(timer)clearInterval(timer);timer=setInterval(poll,700);loadHistory();}
+async function poll(){if(!runId)return;let r=await fetch('/api/run/status/'+runId);let j=await r.json();document.getElementById('prog').value=j.progress||0;document.getElementById('stage').textContent=`${j.state} | ${j.stage} | ${j.progress}%`;let tail=(j.logs||[]).slice(-5);document.getElementById('logs').textContent=tail.join('\n');if(['completed','failed','cancelled'].includes(j.state)){clearInterval(timer);timer=null;fetchResults();loadHistory();}}
+async function cancelRun(){if(!runId)return;await fetch('/api/run/cancel/'+runId,{method:'POST'});log('cancel requested')}
+async function fetchResults(){if(!runId)return;let r=await fetch('/api/run/results/'+runId);last=await r.json();renderResults(last.recommendations||[])}
+function renderResults(arr){let b=document.getElementById('results');if(!arr.length){b.textContent='No recommendations';return;}b.innerHTML='';arr.forEach(rec=>{let d=document.createElement('div');d.style.border='1px solid #ddd';d.style.padding='6px';d.style.marginBottom='6px';d.innerHTML=`<div><b>#${rec.rank}</b> <span class='${rec.tolerance_pass?'ok':'bad'}'>${rec.tolerance_pass?'PASS':'FAIL'}</span></div><div>Δa* ${rec.predicted_delta_a} | Δb* ${rec.predicted_delta_b} | ΔE ${rec.predicted_delta_e}</div><div class='small'>${rec.why||''}</div><button onclick='navigator.clipboard.writeText(JSON.stringify(${JSON.stringify(rec).replace(/'/g,"&#39;")},null,2))'>Copy this recommendation</button>`;let t=document.createElement('div');(rec.changes||[]).forEach(ch=>{let r=document.createElement('div');r.className='small';r.textContent=`${ch.knob}: ${ch.old} -> ${ch.new} (Δ ${ch.delta}) ${ch.clamped?'[clamped]':''}`;t.appendChild(r)});d.appendChild(t);b.appendChild(d)})}
+async function loadHistory(){let r=await fetch('/api/run/history');let j=await r.json();let h=document.getElementById('history');h.innerHTML='';(j.runs||[]).forEach(x=>{let d=document.createElement('div');d.innerHTML=`<a href='#' onclick='openRun("${x.run_id}");return false'>${x.run_id}</a> | ${x.state} | ${x.created_at}`;h.appendChild(d)})}
+function openRun(id){runId=id;fetchResults()}
+function exportRes(fmt){if(!runId){alert('no run');return;}window.open(`/api/run/export/${runId}?format=${fmt}`,'_blank')}
+function copyResult(){if(last)navigator.clipboard.writeText(JSON.stringify(last,null,2))}
+function log(m){document.getElementById('logs').textContent+=`\n${m}`}
+</script></body></html>

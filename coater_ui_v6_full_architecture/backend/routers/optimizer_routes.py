@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..config import load_config
 from ..services.data_loader import DataRepository
+from ..services.knob_rules import KnobRules
 from ..services.run_manager import RunManager
 
 
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/api", tags=["industrial-optimizer"])
 config = load_config()
 repo = DataRepository(dataset_path=Path(config.dataset_path))
 runs = RunManager(repo=repo)
+knob_rules = KnobRules()
 
 
 class DatasetLoadRequest(BaseModel):
@@ -32,16 +34,43 @@ class RunStartRequest(BaseModel):
     knob_bounds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
+def _error(status: int, message: str, details: Optional[Dict[str, Any]] = None):
+    payload: Dict[str, Any] = {"error": message}
+    if details:
+        payload["details"] = details
+    return JSONResponse(status_code=status, content=payload)
+
+
+@router.get("/health")
+def health():
+    rows = repo.load()
+    return {"status": "ok", "dataset_loaded": bool(rows), "run_count": len(runs.history())}
+
+
+@router.get("/config/knob-rules")
+def knob_rules_config():
+    return knob_rules.all()
+
+
 @router.post("/dataset/load")
 def load_dataset(payload: DatasetLoadRequest):
     candidate = Path(payload.path)
     if not candidate.exists():
-        return JSONResponse(status_code=400, content={"error": f"Dataset path not found: {payload.path}"})
+        return _error(400, f"Dataset path not found: {payload.path}")
 
-    repo.set_path(payload.path)
-    rows = repo.load()
+    try:
+        repo.set_path(payload.path)
+        rows = repo.load()
+    except Exception as exc:
+        return _error(400, "Failed to load dataset", {"exception": str(exc)})
+
     if not rows:
-        return JSONResponse(status_code=400, content={"error": "Dataset loaded but empty"})
+        return _error(400, "Dataset loaded but empty")
+
+    required = ["day", "plate_id", "device"]
+    missing = [col for col in required if col not in rows[0]]
+    if missing:
+        return _error(400, "Required columns missing after normalization", {"missing": missing})
 
     return {"status": "ok", "summary": repo.summarize(rows)}
 
@@ -51,16 +80,25 @@ def context(
     date: str = Query(default=""),
     plate: str = Query(default=""),
     device: Optional[str] = Query(default=None),
+    strategy: str = Query(default="latest", pattern="^(latest|mean)$"),
 ):
     rows = repo.load()
-    return repo.get_context(rows=rows, date=date, plate=plate, device=device)
+    return repo.get_context(rows=rows, date=date, plate=plate, device=device, strategy=strategy)
 
 
 @router.post("/run/start")
 def run_start(payload: RunStartRequest):
     rows = repo.load()
     if not rows:
-        return JSONResponse(status_code=400, content={"error": "Dataset not loaded"})
+        return _error(400, "Dataset not loaded")
+
+    # validation
+    if payload.date and payload.date not in {str(r.get("day", "")) for r in rows}:
+        return _error(400, "Invalid date", {"date": payload.date})
+
+    if payload.plate and payload.plate not in {str(r.get("plate_id", "")) for r in rows}:
+        return _error(400, "Invalid plate", {"plate": payload.plate})
+
     return {"run_id": runs.start(payload.model_dump())}
 
 
@@ -70,6 +108,11 @@ def run_status(run_id: str):
     if "error" in st:
         raise HTTPException(status_code=404, detail=st)
     return st
+
+
+@router.get("/run/history")
+def run_history():
+    return {"runs": runs.history()}
 
 
 @router.post("/run/cancel/{run_id}")
@@ -95,28 +138,13 @@ def run_export(run_id: str, format: str = Query(pattern="^(xlsx|json|csv)$")):
         raise HTTPException(status_code=400, detail={"error": "Run results not ready"})
 
     artifacts = result["artifacts"]
-    if format == "xlsx":
-        path = artifacts["xlsx"]
-        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    elif format == "json":
-        path = artifacts["json"]
-        media = "application/json"
-    else:
-        path = artifacts["csv"]
-        media = "text/csv"
-
+    path = artifacts[format]
+    media = {
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "json": "application/json",
+        "csv": "text/csv",
+    }[format]
     p = Path(path)
     if not p.exists():
         raise HTTPException(status_code=404, detail={"error": f"Export file missing: {path}"})
     return FileResponse(path=p, media_type=media, filename=p.name)
-
-
-@router.get("/health/full")
-def health_full():
-    rows = repo.load()
-    return {
-        "status": "ok",
-        "dataset_loaded": bool(rows),
-        "dataset_path": str(repo.dataset_path) if repo.dataset_path else None,
-        "rows": len(rows),
-    }

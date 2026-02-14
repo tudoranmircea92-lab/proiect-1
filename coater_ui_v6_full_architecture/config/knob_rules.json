@@ -1,0 +1,29 @@
+{
+  "groups_order": [
+    "Power/Electric",
+    "Main gases",
+    "Segment gases",
+    "Vacuum/Process",
+    "Cooling",
+    "Other"
+  ],
+  "group_rules": {
+    "Power/Electric": ["*power*", "*voltage*", "*current*", "*freq*", "*arc*", "*sigma*", "*.pwr"],
+    "Main gases": ["*ar_flow*", "*n2_flow*", "*o2_flow*", "*.m1g", "*.m2g", "*.m3g"],
+    "Segment gases": ["*actseggas*", "*.s*g"],
+    "Vacuum/Process": ["*vacuum*", "*processspeed*", "*speed*", "*thickness*"],
+    "Cooling": ["*waterflow*", "*cool*", "*shielding*"]
+  },
+  "defaults": {
+    "*": {"min": -1000000, "max": 1000000, "step": 0.1, "unit": "unitless"},
+    "*voltage*": {"min": 0, "max": 2000, "step": 1, "unit": "V"},
+    "*current*": {"min": 0, "max": 500, "step": 0.1, "unit": "A"},
+    "*power*": {"min": 0, "max": 100000, "step": 10, "unit": "W"},
+    "*.pwr": {"min": 0, "max": 100, "step": 0.1, "unit": "%"},
+    "*freq*": {"min": 0, "max": 50000, "step": 1, "unit": "Hz"},
+    "*flow*": {"min": 0, "max": 1000, "step": 0.1, "unit": "sccm"},
+    "*vacuum*": {"min": 0, "max": 1000, "step": 0.001, "unit": "mbar"},
+    "*thickness*": {"min": 0, "max": 100, "step": 0.01, "unit": "mm"},
+    "*speed*": {"min": 0, "max": 10000, "step": 0.1, "unit": "mm/min"}
+  }
+}

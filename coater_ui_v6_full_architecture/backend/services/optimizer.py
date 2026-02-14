@@ -19,6 +19,7 @@ class Recommendation:
     predicted_delta_b: float
     predicted_delta_e: float
     tolerance_pass: bool
+    why: str
     changes: List[Dict[str, float | str | bool]]
 
 
@@ -27,7 +28,7 @@ def clamp(value: float, minimum: float, maximum: float) -> float:
 
 
 def _mean(rows: List[dict], key: str) -> float:
-    vals = []
+    vals: List[float] = []
     for r in rows:
         try:
             vals.append(float(r.get(key, "")))
@@ -59,7 +60,7 @@ class OptimizerEngine:
             changes: List[Dict[str, float | str | bool]] = []
             step_scale = 1.0 + (rank - 1) * 0.5
 
-            for knob in unlocked_knobs[:8]:
+            for knob in unlocked_knobs[:12]:
                 bound = knob_bounds[knob]
                 old_value = _mean(subset, knob)
                 proposed = old_value + bound.step * step_scale
@@ -81,6 +82,9 @@ class OptimizerEngine:
             delta_b = predicted_b - current_b
             delta_e = (delta_a**2 + delta_b**2) ** 0.5
 
+            top_changes = sorted(changes, key=lambda x: abs(float(x["delta"])), reverse=True)[:3]
+            why = "Top drivers: " + ", ".join(str(c["knob"]) for c in top_changes)
+
             recommendations.append(
                 Recommendation(
                     rank=rank,
@@ -88,6 +92,7 @@ class OptimizerEngine:
                     predicted_delta_b=round(delta_b, 4),
                     predicted_delta_e=round(delta_e, 4),
                     tolerance_pass=delta_e <= tolerance_de,
+                    why=why,
                     changes=changes,
                 )
             )

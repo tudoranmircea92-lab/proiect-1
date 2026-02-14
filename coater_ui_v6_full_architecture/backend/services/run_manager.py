@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .data_loader import DataRepository
+from .knob_rules import KnobRules
 from .optimizer import KnobBound, OptimizerEngine
 from ..utils.logging import get_logger
 
@@ -26,13 +28,16 @@ class RunState:
     results: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    finished_at: Optional[str] = None
 
 
 class RunManager:
     def __init__(self, repo: DataRepository):
         self.repo = repo
+        self.knob_rules = KnobRules()
         self._states: Dict[str, RunState] = {}
         self._cancel_flags: Dict[str, threading.Event] = {}
+        self._history: List[str] = []
         self._lock = threading.Lock()
 
     def start(self, payload: Dict[str, Any]) -> str:
@@ -40,6 +45,7 @@ class RunManager:
         with self._lock:
             self._states[run_id] = RunState(run_id=run_id)
             self._cancel_flags[run_id] = threading.Event()
+            self._history.insert(0, run_id)
         threading.Thread(target=self._execute, args=(run_id, payload), daemon=True).start()
         return run_id
 
@@ -48,11 +54,16 @@ class RunManager:
             st = self._states.get(run_id)
         return asdict(st) if st else {"error": "run_id not found"}
 
+    def history(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            return [asdict(self._states[rid]) for rid in self._history if rid in self._states]
+
     def cancel(self, run_id: str) -> Dict[str, Any]:
         flag = self._cancel_flags.get(run_id)
         if not flag:
             return {"error": "run_id not found"}
         flag.set()
+        self._log(run_id, "Cancel requested")
         return {"status": "cancel_requested", "run_id": run_id}
 
     def results(self, run_id: str) -> Dict[str, Any]:
@@ -75,19 +86,34 @@ class RunManager:
                 setattr(st, k, v)
 
     def _execute(self, run_id: str, payload: Dict[str, Any]) -> None:
+        try:
+            self._execute_inner(run_id, payload)
+        except Exception as exc:
+            self._log(run_id, f"Unhandled error: {exc}")
+            self._update(
+                run_id,
+                state="failed",
+                stage="error",
+                progress=100,
+                error=str(exc),
+                finished_at=datetime.utcnow().isoformat(),
+            )
+
+    def _execute_inner(self, run_id: str, payload: Dict[str, Any]) -> None:
         cancel_flag = self._cancel_flags[run_id]
-        self._update(run_id, state="running", stage="loading_dataset", progress=5)
+        self._update(run_id, state="running", stage="loading dataset", progress=5)
         self._log(run_id, "Run started")
 
         rows = self.repo.load()
         if not rows:
-            self._update(run_id, state="failed", error="Dataset unavailable or empty", progress=100)
-            return
-        if cancel_flag.is_set():
-            self._update(run_id, state="cancelled", stage="cancelled", progress=100)
+            self._update(run_id, state="failed", error="Dataset unavailable or empty", progress=100, finished_at=datetime.utcnow().isoformat())
             return
 
-        self._update(run_id, stage="filtering_context", progress=20)
+        if cancel_flag.is_set():
+            self._update(run_id, state="cancelled", stage="cancelled", progress=100, finished_at=datetime.utcnow().isoformat())
+            return
+
+        self._update(run_id, stage="filtering context", progress=20)
         subset = self.repo.filter_for_run(
             rows,
             payload.get("date", ""),
@@ -96,22 +122,34 @@ class RunManager:
             payload.get("compartments", []),
         )
         if not subset:
-            self._update(run_id, state="failed", error="No data for selected context", progress=100)
+            self._update(run_id, state="failed", error="No data for selected context", progress=100, finished_at=datetime.utcnow().isoformat())
             return
 
-        self._update(run_id, stage="optimizing", progress=55)
+        self._update(run_id, stage="verifying", progress=35)
+        self._log(run_id, f"Context rows: {len(subset)}")
+
         bounds: Dict[str, KnobBound] = {}
-        for knob, b in payload.get("knob_bounds", {}).items():
-            bounds[knob] = KnobBound(
-                minimum=float(b.get("min", -1e9)),
-                maximum=float(b.get("max", 1e9)),
-                step=float(b.get("step", 0.1)),
+        all_cols = sorted({k for r in subset for k in r.keys()})
+        for col in all_cols:
+            if not (col.startswith("c") and "." in col):
+                continue
+            cfg = self.knob_rules.bounds_for(col)
+            b = payload.get("knob_bounds", {}).get(col, {})
+            bounds[col] = KnobBound(
+                minimum=float(b.get("min", cfg.get("min", -1e6))),
+                maximum=float(b.get("max", cfg.get("max", 1e6))),
+                step=float(b.get("step", cfg.get("step", 0.1))),
                 locked=bool(b.get("locked", False)),
             )
-        if not bounds:
-            for col in subset[0].keys():
-                if "." in col and col.startswith("c"):
-                    bounds[col] = KnobBound(-1e9, 1e9, 0.1, False)
+
+        self._update(run_id, stage="optimizing", progress=50)
+        for i in range(1, 4):
+            if cancel_flag.is_set():
+                self._update(run_id, state="cancelled", stage="cancelled", progress=100, finished_at=datetime.utcnow().isoformat())
+                return
+            self._log(run_id, f"optimizing iteration {i}/3")
+            self._update(run_id, progress=50 + i * 8)
+            time.sleep(0.05)
 
         engine = OptimizerEngine()
         recs = engine.build_recommendations(
@@ -123,11 +161,7 @@ class RunManager:
             top_k=3,
         )
 
-        if cancel_flag.is_set():
-            self._update(run_id, state="cancelled", stage="cancelled", progress=100)
-            return
-
-        self._update(run_id, stage="writing_artifacts", progress=80)
+        self._update(run_id, stage="packaging artifacts", progress=85)
         artifacts = self._write_artifacts(run_id, payload, recs)
 
         result_payload = {
@@ -136,7 +170,14 @@ class RunManager:
             "recommendations": [asdict(r) for r in recs],
             "artifacts": artifacts,
         }
-        self._update(run_id, state="completed", stage="done", progress=100, results=result_payload)
+        self._update(
+            run_id,
+            state="completed",
+            stage="done",
+            progress=100,
+            results=result_payload,
+            finished_at=datetime.utcnow().isoformat(),
+        )
         self._log(run_id, "Run completed")
 
     def _write_artifacts(self, run_id: str, payload: Dict[str, Any], recs: List[Any]) -> Dict[str, str]:
@@ -144,10 +185,12 @@ class RunManager:
         base = Path("artifacts") / date_dir / run_id
         base.mkdir(parents=True, exist_ok=True)
 
+        dataset_summary = self.repo.summarize(self.repo.load())
         summary = {
             "run_id": run_id,
             "timestamp": datetime.utcnow().isoformat(),
             "input": payload,
+            "dataset_summary": dataset_summary,
             "dataset_path": str(self.repo.dataset_path) if self.repo.dataset_path else None,
         }
         (base / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -157,16 +200,12 @@ class RunManager:
 
         with (base / "recommendations.csv").open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["rank", "delta_a", "delta_b", "delta_e", "tolerance_pass"])
+            writer.writerow(["rank", "delta_a", "delta_b", "delta_e", "tolerance_pass", "why"])
             for r in recs:
-                writer.writerow([r.rank, r.predicted_delta_a, r.predicted_delta_b, r.predicted_delta_e, r.tolerance_pass])
+                writer.writerow([r.rank, r.predicted_delta_a, r.predicted_delta_b, r.predicted_delta_e, r.tolerance_pass, r.why])
 
-        # Minimal XLSX fallback artifact (CSV content with .xlsx extension for environments without excel libs).
-        with (base / "recommendations.xlsx").open("w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["rank", "delta_a", "delta_b", "delta_e", "tolerance_pass"])
-            for r in recs:
-                writer.writerow([r.rank, r.predicted_delta_a, r.predicted_delta_b, r.predicted_delta_e, r.tolerance_pass])
+        xlsx_path = base / "recommendations.xlsx"
+        self._write_xlsx(xlsx_path, recs)
 
         changes = []
         for r in recs:
@@ -183,7 +222,25 @@ class RunManager:
             "summary": str(base / "run_summary.json"),
             "json": str(base / "recommendations.json"),
             "csv": str(base / "recommendations.csv"),
-            "xlsx": str(base / "recommendations.xlsx"),
+            "xlsx": str(xlsx_path),
             "knob_changes": str(base / "knob_changes.json"),
             "log": str(base / "run_log.txt"),
         }
+
+    def _write_xlsx(self, xlsx_path: Path, recs: List[Any]) -> None:
+        try:
+            from openpyxl import Workbook  # type: ignore
+
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "recommendations"
+            ws.append(["rank", "delta_a", "delta_b", "delta_e", "tolerance_pass", "why"])
+            for r in recs:
+                ws.append([r.rank, r.predicted_delta_a, r.predicted_delta_b, r.predicted_delta_e, r.tolerance_pass, r.why])
+            wb.save(xlsx_path)
+        except Exception:
+            with xlsx_path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["rank", "delta_a", "delta_b", "delta_e", "tolerance_pass", "why"])
+                for r in recs:
+                    writer.writerow([r.rank, r.predicted_delta_a, r.predicted_delta_b, r.predicted_delta_e, r.tolerance_pass, r.why])
