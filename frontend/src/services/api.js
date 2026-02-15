@@ -24,4 +24,16 @@ export const optimize = async (payload) => {
   return data
 }
 
+export const getModelHistory = async () => {
+  const { data } = await api.get('/api/train/registry')
+  return data
+}
+
+export const saveRun = async (runId) => {
+  const { data } = await api.post('/api/train/save', { run_id: runId })
+  return data
+}
+
+export const downloadArtifactUrl = (runId) => `${api.defaults.baseURL}/api/train/artifact/${runId}`
+
 export default api

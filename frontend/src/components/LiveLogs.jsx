@@ -1,11 +1,13 @@
 import React from 'react'
 
-export default function LiveLogs({ logs }) {
+export default function LiveLogs({ logs, progress }) {
   return (
-    <div className="card p-3 h-100">
-      <h6>Live logs</h6>
-      <div style={{ maxHeight: 500, overflow: 'auto' }} className="small">
-        {logs.map((l, i) => <div key={i} className={l.level === 'error' ? 'text-danger' : l.level === 'success' ? 'text-success' : l.level === 'warning' ? 'text-warning' : ''}>{l.ts} {l.message}</div>)}
+    <div className="card full">
+      <h3>Live Logs</h3>
+      <div className="small mb-8">Progress: {progress}%</div>
+      <div className="progress mb-8"><div className="progress-bar" style={{ width: `${progress}%` }} /></div>
+      <div className="log-list">
+        {logs.map((l, i) => <div key={i} className={`log ${l.level || 'info'}`}>{l.ts} — {l.message}</div>)}
       </div>
     </div>
   )

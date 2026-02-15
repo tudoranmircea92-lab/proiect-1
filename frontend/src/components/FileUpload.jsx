@@ -1,12 +1,15 @@
 import React from 'react'
 
-export default function FileUpload({ onFiles, files, error }) {
+export default function FileUpload({ onFiles, files, error, productFilter, setProductFilter }) {
   return (
-    <div className="card p-3">
-      <h5>Browse data files</h5>
-      <input type="file" multiple accept=".parquet,.csv,.xlsx" className="form-control" onChange={(e) => onFiles(Array.from(e.target.files || []))} />
-      {error && <div className="alert alert-danger mt-2 mb-0 py-2">{error}</div>}
-      <div className="mt-2 small">{files.length ? files.map((f) => <div key={f.name}>{f.name}</div>) : 'No files selected'}</div>
+    <div className="card">
+      <h3>Browse Data Files</h3>
+      <input type="file" multiple accept=".parquet,.csv,.xlsx" className="input" onChange={(e) => onFiles(Array.from(e.target.files || []))} />
+      <input className="input mt-8" placeholder="Filter files by product text" value={productFilter} onChange={(e) => setProductFilter(e.target.value)} />
+      {error && <div className="alert danger mt-8">{error}</div>}
+      <div className="small mt-8">
+        {files.length ? files.map((f) => <div key={f.name}>{f.name}</div>) : 'No files selected'}
+      </div>
     </div>
   )
 }

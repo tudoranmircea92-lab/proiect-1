@@ -1,15 +1,21 @@
 import React from 'react'
 
-export default function TrainingSettings({ modelType, setModelType, productName, setProductName, onTrain, canTrain }) {
+export default function TrainingSettings({ modelType, setModelType, productName, setProductName, onTrain, canTrain, loading }) {
   return (
-    <div className="card p-3 mt-3">
-      <h6>Training settings</h6>
-      <input className="form-control mb-2" value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="product_name (optional)" />
-      <select className="form-select mb-2" value={modelType} onChange={(e) => setModelType(e.target.value)}>
-        <option value="control">Control</option>
-        <option value="process">Process</option>
+    <div className="card mt-12">
+      <h3>Input + Config</h3>
+      <label className="small">Select Product</label>
+      <select className="input" value={productName} onChange={(e) => setProductName(e.target.value)}>
+        <option value="GENERAL">GENERAL</option>
+        <option value="PROD_A">PROD_A</option>
+        <option value="PROD_B">PROD_B</option>
       </select>
-      <button className="btn btn-primary" onClick={onTrain} disabled={!canTrain}>Train</button>
+      <label className="small mt-8">Model</label>
+      <select className="input" value={modelType} onChange={(e) => setModelType(e.target.value)}>
+        <option value="process">Process Model</option>
+        <option value="control">Group by Plate (control)</option>
+      </select>
+      <button className="btn mt-12" onClick={onTrain} disabled={!canTrain || loading}>{loading ? 'Training…' : 'Train Model'}</button>
     </div>
   )
 }
