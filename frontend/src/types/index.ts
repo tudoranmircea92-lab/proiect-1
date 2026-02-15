@@ -29,7 +29,10 @@ export type ScanSummary = {
   preview_rows?: Record<string, string | number>[]
   summary_stats?: Record<string, { mean: number; std: number; min: number; max: number }>
   chart_data?: {
-    feature_importance: { feature: string; importance: number }[]
+    feature_importance: { feature: string; importance: number; group?: string; compartment?: string }[]
+    importance_by_compartment?: { compartment: string; importance: number }[]
+    total_controllable_share?: number
+    total_context_share?: number
     metrics: { name: string; mae: number; rmse: number; deltaE: number }[]
   }
 }

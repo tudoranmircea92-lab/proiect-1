@@ -12,7 +12,6 @@ from backend.app.services.registry_service import activate_model, list_entries
 from backend.app.services.training_service import train_model
 
 router = APIRouter(prefix="/train", tags=["train"])
-
 UPLOAD_DIR = Path("backend/app/data/uploads")
 
 
@@ -34,6 +33,7 @@ def _persist_uploads(files: list[UploadFile]) -> list[str]:
 
 
 @router.post("/preview")
+@router.post("/scan-preview")
 async def preview_uploaded_files(files: list[UploadFile] = File(default_factory=list)):
     try:
         file_paths = _persist_uploads(files)
@@ -43,27 +43,15 @@ async def preview_uploaded_files(files: list[UploadFile] = File(default_factory=
             if ext not in {".csv", ".xlsx"}:
                 continue
             df = load_table(path)
-            previews.append(
-                {
-                    "file_name": Path(path).name,
-                    "message": "Showing first 5 rows of your file.",
-                    "columns": df.columns.tolist(),
-                    "rows": df.head(5).fillna("").to_dict(orient="records"),
-                }
-            )
+            previews.append({"file_name": Path(path).name, "message": "Showing first 5 rows of your file.", "columns": df.columns.tolist(), "rows": df.head(5).fillna("").to_dict(orient="records")})
         return {"previews": previews}
     except Exception as exc:
-        msg = str(exc)
-        raise HTTPException(status_code=400, detail=f"Invalid File Format: {msg}") from exc
+        raise HTTPException(status_code=400, detail=f"Invalid File Format: {exc}") from exc
 
 
 @router.post("/scan")
 @router.post("/scan_source")
-async def scan_dataset(
-    request: DatasetScanRequest | None = None,
-    files: list[UploadFile] | None = File(default=None),
-    paths: str | None = Form(default=None),
-):
+async def scan_dataset(request: DatasetScanRequest | None = None, files: list[UploadFile] | None = File(default=None), paths: str | None = Form(default=None)):
     try:
         upload_paths = _persist_uploads(files or [])
         parsed_paths = [p.strip() for p in (paths or "").split(",") if p.strip()]
@@ -76,30 +64,35 @@ async def scan_dataset(
         numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
         stats = {}
         for col in numeric_cols[:20]:
-            series = df[col]
-            stats[col] = {
-                "mean": float(series.mean()) if not series.empty else 0.0,
-                "std": float(series.std()) if not series.empty else 0.0,
-                "min": float(series.min()) if not series.empty else 0.0,
-                "max": float(series.max()) if not series.empty else 0.0,
-            }
+            s = df[col]
+            stats[col] = {"mean": float(s.mean()) if not s.empty else 0.0, "std": float(s.std()) if not s.empty else 0.0, "min": float(s.min()) if not s.empty else 0.0, "max": float(s.max()) if not s.empty else 0.0}
 
-        feature_proxy = [{"feature": c, "importance": float(v)} for c, v in summary.get("missing_rates", {}).items()]
+        feature_proxy = [{"feature": c, "importance": float(v), "group": "context", "compartment": c.split('.', 1)[0] if '.' in c else 'global'} for c, v in summary.get("missing_rates", {}).items()]
         if not feature_proxy:
-            feature_proxy = [{"feature": c, "importance": float(i + 1)} for i, c in enumerate(summary.get("columns", [])[:12])]
+            feature_proxy = [{"feature": c, "importance": float(i + 1), "group": "context", "compartment": c.split('.', 1)[0] if '.' in c else 'global'} for i, c in enumerate(summary.get("columns", [])[:12])]
+        comp = {}
+        for r in feature_proxy:
+            comp[r["compartment"]] = comp.get(r["compartment"], 0.0) + r["importance"]
+        comp_rows = [{"compartment": k, "importance": float(v)} for k, v in comp.items()]
 
-        metrics_proxy = [
-            {"name": "rows", "mae": float(summary.get("rows", 0)), "rmse": float(summary.get("plates", 0)), "deltaE": float(len(summary.get("products", [])))},
-            {"name": "targets", "mae": float(len(summary.get("detected_targets", []))), "rmse": float(len(summary.get("columns", []))), "deltaE": float(len(summary.get("compartments", [])))},
-        ]
-
-        summary["resolved_paths"] = final_paths
-        summary["selected_files"] = [Path(p).name for p in final_paths]
-        summary["status"] = "Scan successful"
-        summary["message"] = "Processing completed"
-        summary["preview_rows"] = preview_rows
-        summary["summary_stats"] = stats
-        summary["chart_data"] = {"feature_importance": feature_proxy, "metrics": metrics_proxy}
+        summary.update({
+            "resolved_paths": final_paths,
+            "selected_files": [Path(p).name for p in final_paths],
+            "status": "Scan successful",
+            "message": "Processing completed",
+            "preview_rows": preview_rows,
+            "summary_stats": stats,
+            "warning": summary.get("missing_product_name_message", "") if not summary.get("has_product_name", True) else "",
+            "chart_data": {
+                "feature_importance": feature_proxy,
+                "importance_by_compartment": comp_rows,
+                "total_controllable_share": 0.0,
+                "total_context_share": 1.0,
+                "metrics": [
+                    {"name": "rows", "mae": float(summary.get("rows", 0)), "rmse": float(summary.get("plates", 0)), "deltaE": float(len(summary.get("products", [])))}
+                ],
+            },
+        })
         return summary
     except Exception as exc:
         msg = str(exc)
@@ -117,25 +110,9 @@ def run_training(request: TrainRequest):
             df = join_process_color(request.process_path, request.color_path, request.join_tolerance_minutes)
         else:
             raise ValueError("Provide dataset_paths or process_path+color_path")
-        output = train_model(
-            df=df,
-            product_name=request.product_name,
-            target_columns=request.target_columns,
-            model_type=request.model_type,
-            split_mode=request.split_mode,
-            ratios=request.split_ratios,
-            compute_delta_e=request.compute_delta_e,
-        )
-        if request.include_general_model and request.product_name != "GENERAL":
-            train_model(
-                df=df,
-                product_name="GENERAL",
-                target_columns=request.target_columns,
-                model_type=request.model_type,
-                split_mode=request.split_mode,
-                ratios=request.split_ratios,
-                compute_delta_e=request.compute_delta_e,
-            )
+
+        output = train_model(df=df, product_name=request.product_name or "GENERAL", target_columns=request.target_columns, model_type=request.model_type, split_mode=request.split_mode, ratios=request.split_ratios, compute_delta_e=request.compute_delta_e)
+        output["preview_rows"] = df.head(5).fillna("").to_dict(orient="records")
         return output
     except Exception as exc:
         msg = str(exc)
@@ -144,6 +121,12 @@ def run_training(request: TrainRequest):
         raise HTTPException(status_code=400, detail=msg) from exc
 
 
+@router.get("/importance")
+def get_importance_by_model(model_id: str):
+    entry = next((e for e in list_entries() if e["run_id"] == model_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="model not found")
+    return read_json(entry["artifacts"]["importance"], {})
 
 
 @router.post("/export-processed")
@@ -171,8 +154,7 @@ def save_training_run(request: TrainSaveRequest):
     if not entry:
         raise HTTPException(status_code=404, detail="run not found")
     report_path = Path(entry["artifacts"]["metrics"]).with_name("training_report.html")
-    html = f"<html><body><h1>Training Report {entry['run_id']}</h1><p>Product: {entry['product_name']}</p><p>Model type: {entry['model_type']}</p><pre>{entry['metrics']}</pre></body></html>"
-    report_path.write_text(html, encoding="utf-8")
+    report_path.write_text(f"<html><body><h1>Training Report {entry['run_id']}</h1><pre>{entry['metrics']}</pre></body></html>", encoding="utf-8")
     return {"status": "saved", "run_id": request.run_id, "report": str(report_path)}
 
 
@@ -206,20 +188,9 @@ def get_importance(run_id: str):
     entry = next((e for e in list_entries() if e["run_id"] == run_id), None)
     if not entry:
         raise HTTPException(status_code=404, detail="run not found")
-    data = read_json(entry["artifacts"]["importance"], {"by_feature": []})
-    feature_groups = read_json(entry["artifacts"]["feature_groups"], {})
-    by_comp: dict[str, float] = {}
-    controllable, context = 0.0, 0.0
-    for row in data["by_feature"]:
-        feat = row["feature"]
-        imp = max(0.0, row["importance"])
-        grp = feature_groups.get(feat, "global")
-        by_comp[grp] = by_comp.get(grp, 0.0) + imp
-        if "." in feat and any(feat.endswith(s) for s in ["pwr", "m1g", "m2g", "m3g"] + [f"s{i}g" for i in range(1, 12)]):
-            controllable += imp
-        else:
-            context += imp
-    by_compartment = [{"compartment": k, "importance": float(v)} for k, v in by_comp.items()]
-    by_compartment.sort(key=lambda x: x["importance"], reverse=True)
-    total = controllable + context or 1.0
-    return {"by_feature": data["by_feature"][:30], "by_compartment": by_compartment, "share": {"controllable": controllable / total, "context": context / total}}
+    data = read_json(entry["artifacts"]["importance"], {"feature_importances": [], "importance_by_compartment": [], "total_controllable_share": 0, "total_context_share": 0})
+    return {
+        "by_feature": data.get("feature_importances", []),
+        "by_compartment": data.get("importance_by_compartment", []),
+        "share": {"controllable": data.get("total_controllable_share", 0), "context": data.get("total_context_share", 0)},
+    }

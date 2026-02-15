@@ -1,5 +1,5 @@
 import { forwardRef } from 'react'
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 type MetricRow = { name: string; mae: number; rmse: number; deltaE: number }
 
@@ -9,19 +9,19 @@ type Props = {
 
 const TrainingMetricsChart = forwardRef<HTMLDivElement, Props>(({ data }, ref) => (
   <div ref={ref} className="rounded bg-white p-2">
-    <p className="mb-2 text-xs font-semibold">Training Metrics Trend</p>
+    <p className="mb-2 text-xs font-semibold">Training Metrics (horizontal bars)</p>
     <div className="h-56">
       <ResponsiveContainer>
-        <LineChart data={data}>
+        <BarChart data={data} layout="vertical">
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" />
-          <YAxis />
+          <XAxis type="number" />
+          <YAxis type="category" dataKey="name" width={90} />
           <Tooltip />
           <Legend />
-          <Line dataKey="mae" stroke="#0ea5e9" />
-          <Line dataKey="rmse" stroke="#f97316" />
-          <Line dataKey="deltaE" stroke="#16a34a" />
-        </LineChart>
+          <Bar dataKey="mae" fill="#0ea5e9" />
+          <Bar dataKey="rmse" fill="#f97316" />
+          <Bar dataKey="deltaE" fill="#16a34a" />
+        </BarChart>
       </ResponsiveContainer>
     </div>
   </div>

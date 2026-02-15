@@ -18,6 +18,8 @@ app.add_middleware(
 
 app.include_router(train_router)
 app.include_router(optimize_router)
+app.include_router(train_router, prefix="/api")
+app.include_router(optimize_router, prefix="/api")
 
 
 @app.get("/health")
