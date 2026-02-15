@@ -2,9 +2,29 @@ export type TrainRun = {
   run_id: string
   product_name: string
   model_type: string
-  metrics: Record<string, unknown>
+  metrics: {
+    mae?: Record<string, number>
+    rmse?: Record<string, number>
+    mae_avg?: number
+    rmse_avg?: number
+    delta_e?: number
+  }
   included_features: string[]
   excluded_features: string[]
+}
+
+export type ScanSummary = {
+  rows: number
+  columns: string[]
+  products: string[]
+  detected_targets: string[]
+  compartments: string[]
+}
+
+export type ImportanceResponse = {
+  by_feature: { feature: string; importance: number }[]
+  by_compartment: { compartment: string; importance: number }[]
+  share: { controllable: number; context: number }
 }
 
 export type RegistryRun = {

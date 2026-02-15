@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
 from backend.app.schemas.train import ActivateModelRequest, DatasetScanRequest, FeatureImportanceResponse, RegistryEntry, TrainRequest, TrainSaveRequest
 from backend.app.services.dataset_service import join_process_color, load_datasets, resolve_paths, summarize_dataset
-from backend.app.services.io_utils import read_json, write_json
+from backend.app.services.io_utils import read_json
 from backend.app.services.registry_service import activate_model, list_entries
 from backend.app.services.training_service import train_model
 
@@ -73,6 +74,17 @@ def save_training_run(request: TrainSaveRequest):
     """
     report_path.write_text(html, encoding="utf-8")
     return {"status": "saved", "run_id": request.run_id, "report": str(report_path)}
+
+
+@router.get("/artifact/{run_id}")
+def download_model_artifact(run_id: str):
+    entry = next((e for e in list_entries() if e["run_id"] == run_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="run not found")
+    model_path = Path(entry["artifacts"]["model"])
+    if not model_path.exists():
+        raise HTTPException(status_code=404, detail="artifact missing")
+    return FileResponse(model_path, filename=f"{run_id}_model.joblib", media_type="application/octet-stream")
 
 
 @router.get("/registry", response_model=list[RegistryEntry])

@@ -12,6 +12,8 @@ class OptimizeRequest(BaseModel):
     mode: Literal["match_color", "balanced", "minimize_gas", "minimize_energy"] = "balanced"
     top_k_compartments: int = 3
     coverage_threshold: float = 0.8
+    include_compartments: list[str] = Field(default_factory=list)
+    exclude_compartments: list[str] = Field(default_factory=list)
 
 
 class OptimizeResponse(BaseModel):

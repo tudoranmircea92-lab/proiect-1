@@ -59,7 +59,7 @@ def _relevance_by_compartment(model, features: list[str], current_state: dict, t
     return comp_scores
 
 
-def optimize(product_name: str, current_state: dict, target_color: dict[str, float], mode: str, top_k: int, coverage_threshold: float) -> dict:
+def optimize(product_name: str, current_state: dict, target_color: dict[str, float], mode: str, top_k: int, coverage_threshold: float, include_compartments: list[str] | None = None, exclude_compartments: list[str] | None = None) -> dict:
     entry, model, schema = _model_bundle(product_name)
     features = schema["features"]
     targets = schema["targets"]
@@ -67,6 +67,11 @@ def optimize(product_name: str, current_state: dict, target_color: dict[str, flo
 
     target = np.array([target_color[t] for t in targets])
     relevance = _relevance_by_compartment(model, features, current_state, target, config)
+    include_set = set(include_compartments or [])
+    exclude_set = set(exclude_compartments or [])
+    if include_set:
+        relevance = [r for r in relevance if r["compartment"] in include_set]
+    relevance = [r for r in relevance if r["compartment"] not in exclude_set]
     selected = []
     cum = 0.0
     total = sum(r["score"] for r in relevance) or 1.0

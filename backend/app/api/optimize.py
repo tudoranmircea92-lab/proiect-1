@@ -20,6 +20,8 @@ def run_optimization(request: OptimizeRequest):
             mode=request.mode,
             top_k=request.top_k_compartments,
             coverage_threshold=request.coverage_threshold,
+            include_compartments=request.include_compartments,
+            exclude_compartments=request.exclude_compartments,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
