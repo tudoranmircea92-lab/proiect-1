@@ -1,5 +1,4 @@
 import React, { useMemo, useRef, useState } from 'react'
-import 'bootstrap/dist/css/bootstrap.min.css'
 import DataPreview from './components/DataPreview'
 import FeatureImportanceChart from './components/FeatureImportanceChart'
 import FileUpload from './components/FileUpload'
