@@ -61,8 +61,6 @@ def join_process_color(process_path: str, color_path: str, tolerance_minutes: in
 
 
 def summarize_dataset(df: pd.DataFrame, target_columns: list[str] | None = None) -> dict:
-    if MANDATORY_COLUMN not in df.columns:
-        raise ValueError("Dataset must contain product_name")
     ts_col = _infer_timestamp_column(df.columns.tolist())
     date_min = date_max = None
     if ts_col:
@@ -73,18 +71,25 @@ def summarize_dataset(df: pd.DataFrame, target_columns: list[str] | None = None)
     for target in target_columns or _infer_target_columns(df.columns.tolist()):
         if target in df.columns:
             missing[target] = float(df[target].isna().mean())
+
+    has_product = MANDATORY_COLUMN in df.columns
+    products = sorted(df[MANDATORY_COLUMN].dropna().astype(str).unique().tolist()) if has_product else []
+
     return {
         "rows": int(len(df)),
         "plates": int(df[PLATE_COLUMN].nunique()) if PLATE_COLUMN in df.columns else 0,
         "date_min": date_min,
         "date_max": date_max,
         "missing_rates": missing,
-        "products": sorted(df[MANDATORY_COLUMN].dropna().astype(str).unique().tolist()),
+        "products": products,
         "compartments": detect_compartments(df.columns.tolist()),
         "columns": sorted(df.columns.tolist()),
         "detected_plate_col": PLATE_COLUMN if PLATE_COLUMN in df.columns else None,
         "detected_timestamp_col": ts_col,
         "detected_targets": _infer_target_columns(df.columns.tolist()),
+        "has_product_name": has_product,
+        "missing_product_name_message": "The dataset does not contain a 'product_name' column. You can proceed without this column or update your file to include it." if not has_product else "",
+        "recommended_columns": ["product_name", "date", "plate"],
     }
 
 

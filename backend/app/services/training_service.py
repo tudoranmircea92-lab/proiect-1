@@ -19,6 +19,14 @@ from backend.app.services.registry_service import add_entry, ensure_registry_dir
 from backend.app.services.io_utils import write_json
 
 
+def _ensure_product_column(df: pd.DataFrame) -> pd.DataFrame:
+    if MANDATORY_COLUMN not in df.columns:
+        out = df.copy()
+        out[MANDATORY_COLUMN] = "GENERAL"
+        return out
+    return df
+
+
 def _feature_sets(df: pd.DataFrame, targets: list[str], model_type: str) -> tuple[list[str], list[str]]:
     excluded = set(targets) | LEAKAGE_COLUMNS
     included = []
@@ -61,7 +69,11 @@ def _delta_e(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 
 def train_model(df: pd.DataFrame, product_name: str, target_columns: list[str], model_type: str, split_mode: str, ratios: tuple[float, float, float], compute_delta_e: bool) -> dict:
+    df = _ensure_product_column(df)
     scoped_df = df[df[MANDATORY_COLUMN].astype(str) == product_name].copy() if product_name != "GENERAL" else df.copy()
+    if len(scoped_df) == 0 and product_name != "GENERAL":
+        scoped_df = df.copy()
+        product_name = "GENERAL"
     scoped_df = scoped_df.dropna(subset=target_columns)
     if len(scoped_df) < 20:
         raise ValueError("Not enough rows for training after filters")

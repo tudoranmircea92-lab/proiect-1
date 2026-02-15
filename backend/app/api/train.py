@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from backend.app.schemas.train import ActivateModelRequest, DatasetScanRequest, FeatureImportanceResponse, RegistryEntry, TrainRequest, TrainSaveRequest
+from backend.app.schemas.train import ActivateModelRequest, DatasetScanRequest, ExportProcessedRequest, FeatureImportanceResponse, RegistryEntry, TrainRequest, TrainSaveRequest
 from backend.app.services.dataset_service import join_process_color, load_datasets, resolve_paths, summarize_dataset
 from backend.app.services.io_utils import SUPPORTED_EXTENSIONS, load_table, read_json
 from backend.app.services.registry_service import activate_model, list_entries
@@ -142,6 +142,27 @@ def run_training(request: TrainRequest):
         if "Network" in msg:
             raise HTTPException(status_code=503, detail="Network Error") from exc
         raise HTTPException(status_code=400, detail=msg) from exc
+
+
+
+
+@router.post("/export-processed")
+def export_processed_data(request: ExportProcessedRequest):
+    try:
+        df = load_datasets(resolve_paths(request.dataset_paths))
+        out_dir = Path("backend/app/data/exports")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if request.file_format == "xlsx":
+            out = out_dir / "processed_data.xlsx"
+            df.to_excel(out, index=False)
+            media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            out = out_dir / "processed_data.csv"
+            df.to_csv(out, index=False)
+            media = "text/csv"
+        return FileResponse(out, filename=out.name, media_type=media)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/save")

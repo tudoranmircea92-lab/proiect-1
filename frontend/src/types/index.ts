@@ -23,6 +23,9 @@ export type ScanSummary = {
   resolved_paths?: string[]
   status?: string
   message?: string
+  has_product_name?: boolean
+  missing_product_name_message?: string
+  recommended_columns?: string[]
   preview_rows?: Record<string, string | number>[]
   summary_stats?: Record<string, { mean: number; std: number; min: number; max: number }>
   chart_data?: {

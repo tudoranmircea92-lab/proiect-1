@@ -22,6 +22,9 @@ class DatasetSummary(BaseModel):
     detected_plate_col: str | None
     detected_timestamp_col: str | None
     detected_targets: list[str]
+    has_product_name: bool
+    missing_product_name_message: str
+    recommended_columns: list[str]
 
 
 class TrainRequest(BaseModel):
@@ -69,3 +72,8 @@ class FeatureImportanceResponse(BaseModel):
     by_feature: list[dict]
     by_compartment: list[dict]
     share: dict[str, float]
+
+
+class ExportProcessedRequest(BaseModel):
+    dataset_paths: list[str] = Field(default_factory=list)
+    file_format: Literal["csv", "xlsx"] = "csv"
