@@ -15,13 +15,16 @@ def run_optimization(request: OptimizeRequest):
     try:
         return optimize(
             product_name=request.product_name,
+            model_id=request.model_id,
             current_state=request.current_state,
             target_color=request.target_color,
             mode=request.mode,
+            objective=request.objective,
             top_k=request.top_k_compartments,
             coverage_threshold=request.coverage_threshold,
             include_compartments=request.include_compartments,
             exclude_compartments=request.exclude_compartments,
+            constraints=request.constraints,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
