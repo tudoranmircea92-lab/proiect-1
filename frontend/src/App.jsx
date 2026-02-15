@@ -8,6 +8,27 @@ import TrainingMetrics from './components/TrainingMetrics'
 import TrainingSettings from './components/TrainingSettings'
 import { downloadArtifactUrl, getImportance, getModelHistory, optimize, saveRun, scanData, trainModel } from './services/api'
 
+const DEFAULT_CONFIG = {
+  productName: 'GENERAL',
+  modelType: 'process',
+  inputScope: 'all_devices',
+  colorScope: 'all',
+  selectedColorTarget: 'L_star_RG_mean',
+  physicalParams: [],
+  trainingMethod: 'all_data',
+  subsetRatio: 0.3,
+  dateFrom: '',
+  dateTo: '',
+  optimizableScope: 'all',
+  manualOverridesText: '{}',
+  metricMode: 'mae',
+  metricSubsetProduct: '',
+  modelFamily: 'random_forest',
+  trainingSpeed: 'quick',
+  crossValidation: false,
+  cvFolds: 3,
+}
+
 export default function App() {
   const [tab, setTab] = useState('TRAIN')
   const [theme, setTheme] = useState('dark')
@@ -20,8 +41,7 @@ export default function App() {
   const [progress, setProgress] = useState(0)
 
   const [allowMissing, setAllowMissing] = useState(false)
-  const [modelType, setModelType] = useState('process')
-  const [productName, setProductName] = useState('GENERAL')
+  const [config, setConfig] = useState(DEFAULT_CONFIG)
   const [training, setTraining] = useState(null)
   const [view, setView] = useState('all')
   const [isScanning, setIsScanning] = useState(false)
@@ -74,17 +94,45 @@ export default function App() {
     }
   }
 
+  const parseOverrides = () => {
+    try {
+      const parsed = JSON.parse(config.manualOverridesText || '{}')
+      return typeof parsed === 'object' && parsed !== null ? parsed : {}
+    } catch {
+      addLog('Manual overrides JSON invalid. Using empty overrides.', 'warning')
+      return {}
+    }
+  }
+
   const doTrain = async () => {
     if (scan?.warning && !allowMissing) return addLog('Choose Skip before training without product_name.', 'warning')
     setIsTraining(true)
     setProgress(55)
     addLog('Training started...')
+
     const payload = {
       dataset_paths: scan?.resolved_paths || [],
-      model_type: modelType,
-      product_name: productName,
+      model_type: config.modelType,
+      product_name: config.productName,
       target_columns: ['L_star_RG_mean', 'a_star_RG_mean', 'b_star_RG_mean'],
+      input_scope: config.inputScope,
+      color_scope: config.colorScope,
+      selected_color_target: config.selectedColorTarget,
+      physical_params: config.physicalParams,
+      training_method: config.trainingMethod,
+      subset_ratio: config.subsetRatio,
+      date_from: config.dateFrom || null,
+      date_to: config.dateTo || null,
+      optimizable_scope: config.optimizableScope,
+      manual_overrides: parseOverrides(),
+      metric_mode: config.metricMode,
+      metric_subset_product: config.metricSubsetProduct || null,
+      model_family: config.modelFamily,
+      training_speed: config.trainingSpeed,
+      cross_validation: config.crossValidation,
+      cv_folds: config.cvFolds,
     }
+
     try {
       const out = await trainModel(payload)
       const imp = await getImportance(out.model_id)
@@ -105,7 +153,7 @@ export default function App() {
     addLog('Optimization started...')
     try {
       const payload = {
-        product_name: productName,
+        product_name: config.productName,
         current_state: currentState,
         target_color: target,
         mode,
@@ -171,7 +219,7 @@ export default function App() {
             <FileUpload onFiles={onFiles} files={files} error={error} productFilter={productFilter} setProductFilter={setProductFilter} />
             <button className="btn mt-12" onClick={doScan} disabled={!files.length || isScanning}>{isScanning ? 'Scanning…' : 'Scan Source'}</button>
             <DataPreview scan={scan} onSkip={() => setAllowMissing(true)} onUpdate={() => { setAllowMissing(false); setScan(null); setFiles([]) }} />
-            <TrainingSettings modelType={modelType} setModelType={setModelType} productName={productName} setProductName={setProductName} onTrain={doTrain} canTrain={!!scan} loading={isTraining} />
+            <TrainingSettings config={config} setConfig={setConfig} onTrain={doTrain} canTrain={!!scan} loading={isTraining} />
           </aside>
 
           <main>
@@ -192,9 +240,7 @@ export default function App() {
             </div>
           </main>
 
-          <aside>
-            <LiveLogs logs={logs} progress={progress} />
-          </aside>
+          <aside><LiveLogs logs={logs} progress={progress} /></aside>
         </div>
       )}
 

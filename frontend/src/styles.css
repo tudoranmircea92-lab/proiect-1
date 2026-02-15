@@ -22,6 +22,8 @@ body { margin: 0; font-family: Inter, system-ui, Arial, sans-serif; background: 
 h1, h3 { margin: 0 0 8px 0; }
 
 .row { display: flex; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
 .between { justify-content: space-between; }
 .center { align-items: center; }
 .gap-8 { gap: 8px; }
