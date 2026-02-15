@@ -21,6 +21,14 @@ export type ScanSummary = {
   compartments: string[]
   selected_files?: string[]
   resolved_paths?: string[]
+  status?: string
+  message?: string
+  preview_rows?: Record<string, string | number>[]
+  summary_stats?: Record<string, { mean: number; std: number; min: number; max: number }>
+  chart_data?: {
+    feature_importance: { feature: string; importance: number }[]
+    metrics: { name: string; mae: number; rmse: number; deltaE: number }[]
+  }
 }
 
 export type ImportanceResponse = {

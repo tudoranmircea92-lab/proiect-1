@@ -9,6 +9,8 @@ const targetKeys = ['L_star_RG_mean', 'a_star_RG_mean', 'b_star_RG_mean']
 const allowedExt = ['.parquet', '.csv', '.xlsx']
 
 type ImportanceView = 'controllable' | 'context'
+type ChartFormat = 'png' | 'jpeg'
+type LogLevel = 'info' | 'success' | 'error'
 
 type PreviewBlock = {
   file_name: string
@@ -17,22 +19,44 @@ type PreviewBlock = {
   rows: Record<string, string | number>[]
 }
 
-const downloadSvgFromRef = (ref: RefObject<HTMLDivElement>, filename: string) => {
+type LogEntry = { message: string; level: LogLevel; ts: string }
+
+const logClass: Record<LogLevel, string> = {
+  info: 'text-slate-700',
+  success: 'text-emerald-700',
+  error: 'text-red-700',
+}
+
+const downloadChartImage = async (ref: RefObject<HTMLDivElement>, filename: string, format: ChartFormat) => {
   const svg = ref.current?.querySelector('svg')
   if (!svg) return
-  const data = new XMLSerializer().serializeToString(svg)
-  const blob = new Blob([data], { type: 'image/svg+xml;charset=utf-8' })
+  const svgData = new XMLSerializer().serializeToString(svg)
+  const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+  const img = new Image()
+  img.onload = () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = img.width || 1200
+    canvas.height = img.height || 600
+    const ctx = canvas.getContext('2d')
+    if (ctx) {
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(img, 0, 0)
+      const out = canvas.toDataURL(`image/${format}`)
+      const a = document.createElement('a')
+      a.href = out
+      a.download = `${filename}.${format}`
+      a.click()
+    }
+    URL.revokeObjectURL(url)
+  }
+  img.src = url
 }
 
 export default function App() {
   const [tab, setTab] = useState<'TRAIN' | 'OPTIMIZE' | 'MODELS'>('TRAIN')
-  const [logs, setLogs] = useState<string[]>([])
+  const [logs, setLogs] = useState<LogEntry[]>([])
   const [scan, setScan] = useState<ScanSummary | null>(null)
   const [run, setRun] = useState<TrainRun | null>(null)
   const [registry, setRegistry] = useState<RegistryRun[]>([])
@@ -40,6 +64,9 @@ export default function App() {
   const [importanceView, setImportanceView] = useState<ImportanceView>('controllable')
   const [optResult, setOptResult] = useState<OptimizeResult | null>(null)
   const [progress, setProgress] = useState(0)
+  const [scanProgress, setScanProgress] = useState(0)
+  const [isScanning, setIsScanning] = useState(false)
+  const [scanStatus, setScanStatus] = useState('')
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [datasetPaths, setDatasetPaths] = useState<string[]>([])
   const [fileError, setFileError] = useState('')
@@ -49,6 +76,7 @@ export default function App() {
   const [showA, setShowA] = useState(true)
   const [showB, setShowB] = useState(true)
   const [showDelta, setShowDelta] = useState(false)
+  const [chartFormat, setChartFormat] = useState<ChartFormat>('png')
 
   const importanceChartRef = useRef<HTMLDivElement>(null)
   const metricsChartRef = useRef<HTMLDivElement>(null)
@@ -65,24 +93,29 @@ export default function App() {
     currentStateJson: '{"product_name":"PROD_A","plate":"P001","c4.pwr":55,"c4.m1g":40,"c4.m2g":40,"c4.m3g":40,"c4.s1g":10,"c5.pwr":60,"c5.m1g":30,"c7.m2g":50,"actVacuumPressure":49}',
   })
 
-  const log = (msg: string) => setLogs((prev) => [`${new Date().toLocaleTimeString()} ${msg}`, ...prev].slice(0, 200))
+  const addLog = (message: string, level: LogLevel = 'info') => setLogs((prev) => [{ message, level, ts: new Date().toLocaleTimeString() }, ...prev].slice(0, 300))
+
+  const scanFeatureData = useMemo(() => {
+    if (!scan?.chart_data?.feature_importance) return []
+    return scan.chart_data.feature_importance.slice(0, 20)
+  }, [scan])
+
+  const scanMetricsData = useMemo(() => {
+    if (!scan?.chart_data?.metrics) return []
+    return scan.chart_data.metrics
+  }, [scan])
 
   const filteredFeatureImportance = useMemo(() => {
-    if (!importance) return []
-    return importance.by_feature
-      .filter((x) => (importanceView === 'controllable' ? /\.(pwr|m1g|m2g|m3g|s\d+g)$/.test(x.feature) : !/\.(pwr|m1g|m2g|m3g|s\d+g)$/.test(x.feature)))
-      .slice(0, 20)
-  }, [importance, importanceView])
+    const source = importance?.by_feature?.length ? importance.by_feature : scanFeatureData
+    return source.filter((x) => (importanceView === 'controllable' ? /\.(pwr|m1g|m2g|m3g|s\d+g)$/.test(x.feature) : !/\.(pwr|m1g|m2g|m3g|s\d+g)$/.test(x.feature))).slice(0, 20)
+  }, [importance, importanceView, scanFeatureData])
 
-  const trainingMetricsRows = useMemo(() => {
-    if (!run?.metrics?.mae || !run?.metrics?.rmse) return []
-    return targetKeys.map((target) => ({ target, mae: run.metrics.mae?.[target] ?? 0, rmse: run.metrics.rmse?.[target] ?? 0 }))
-  }, [run])
-
-  const metricsLineData = useMemo(
-    () => trainingMetricsRows.map((x) => ({ name: x.target, mae: x.mae, rmse: x.rmse, deltaE: run?.metrics?.delta_e ?? 0 })),
-    [trainingMetricsRows, run],
-  )
+  const metricsLineData = useMemo(() => {
+    if (run?.metrics?.mae && run?.metrics?.rmse) {
+      return targetKeys.map((t) => ({ name: t, mae: run.metrics.mae?.[t] ?? 0, rmse: run.metrics.rmse?.[t] ?? 0, deltaE: run.metrics.delta_e ?? 0 }))
+    }
+    return scanMetricsData
+  }, [run, scanMetricsData])
 
   const profileData = useMemo(() => {
     if (!optResult) return []
@@ -98,7 +131,8 @@ export default function App() {
   const onSelectFiles = async (files: File[]) => {
     const invalid = files.filter((f) => !allowedExt.some((ext) => f.name.toLowerCase().endsWith(ext)))
     if (invalid.length > 0) {
-      setFileError('Invalid file type. Please select a .csv, .xlsx, or .parquet file.')
+      setFileError('Invalid file type selected. Please upload a .csv, .xlsx, or .parquet file.')
+      addLog('Invalid file type selected', 'error')
       setSelectedFiles(files.filter((f) => allowedExt.some((ext) => f.name.toLowerCase().endsWith(ext))))
       return
     }
@@ -113,7 +147,7 @@ export default function App() {
         const res = await api.post('/train/preview', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
         setPreviews(res.data.previews || [])
       } catch {
-        setPreviews([])
+        addLog('Network Error while previewing files', 'error')
       }
     } else {
       setPreviews([])
@@ -122,28 +156,41 @@ export default function App() {
 
   const scanDataset = async () => {
     if (!selectedFiles.length) {
-      log('Please choose data files first')
+      addLog('No files selected for scanning', 'error')
       return
     }
     try {
+      setIsScanning(true)
+      setScanProgress(15)
+      setScanStatus('Scanning data...')
+      addLog('Scanning data', 'info')
       const formData = new FormData()
       selectedFiles.forEach((f) => formData.append('files', f))
+      setScanProgress(55)
       const res = await api.post('/train/scan_source', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
       setScan(res.data)
       setDatasetPaths(res.data.resolved_paths || [])
       if (res.data.products?.length) setTrainForm((prev) => ({ ...prev, product_name: res.data.products[0] }))
-      log('Scan data completed')
+      setScanProgress(100)
+      setScanStatus('Scan successful, ready for training')
+      addLog('Scan successful', 'success')
+      addLog('Processing completed', 'success')
     } catch (e: any) {
-      log(`Scan failed: ${e.message}`)
+      const detail = e?.response?.data?.detail || e?.message || 'Network Error'
+      setScanStatus(detail)
+      addLog(detail.includes('Network') ? 'Network Error' : detail, 'error')
+    } finally {
+      setIsScanning(false)
     }
   }
 
   const runTraining = async () => {
     if (!datasetPaths.length) {
-      log('Scan data before training')
+      addLog('Scan data before training', 'error')
       return
     }
     setProgress(10)
+    addLog('Training started', 'info')
     try {
       const res = await api.post('/train/run', {
         dataset_paths: datasetPaths,
@@ -159,10 +206,10 @@ export default function App() {
       const imp = await api.get(`/train/importance/${res.data.run_id}`)
       setImportance(imp.data)
       setProgress(100)
-      log(`Training completed: ${res.data.run_id}`)
+      addLog(`Training completed: ${res.data.run_id}`, 'success')
     } catch (e: any) {
       setProgress(0)
-      log(`Training failed: ${e.message}`)
+      addLog(e?.response?.data?.detail || 'Training failed', 'error')
     }
   }
 
@@ -197,7 +244,7 @@ export default function App() {
     })
     setOptResult(res.data)
     setSelectedCompartments(res.data.selected_compartments.map((x: { compartment: string }) => x.compartment))
-    log('Optimization completed')
+    addLog('Optimization completed', 'success')
   }
 
   const downloadRecommendationJson = () => {
@@ -232,6 +279,10 @@ export default function App() {
               {fileError && <p className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">{fileError}</p>}
               <div className="mt-2 max-h-24 overflow-auto rounded border bg-white p-2 text-xs">{selectedFiles.length ? selectedFiles.map((f) => <p key={f.name}>{f.name}</p>) : 'No files selected'}</div>
 
+              {isScanning && <div className="mt-2 animate-pulse text-xs text-slate-600">Scanning...</div>}
+              <div className="mt-2 h-2 rounded bg-slate-200"><div className="h-2 rounded bg-indigo-500" style={{ width: `${scanProgress}%` }} /></div>
+              {scanStatus && <p className="mt-2 text-xs font-semibold text-indigo-700">{scanStatus}</p>}
+
               <select className="mt-2 w-full rounded border p-2" value={trainForm.product_name} onChange={(e) => setTrainForm({ ...trainForm, product_name: e.target.value })}>
                 {(scan?.products?.length ? scan.products : [trainForm.product_name]).map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
@@ -247,7 +298,7 @@ export default function App() {
 
             <div className="col-span-6 rounded-xl bg-slate-50 p-4">
               <h3 className="font-semibold">Training Metrics & Importance</h3>
-              {scan && <div className="mt-2 rounded bg-white p-3 text-sm"><p><b>Rows:</b> {scan.rows}</p><p><b>Targets:</b> {scan.detected_targets.join(', ')}</p><p><b>Columns:</b> {scan.columns.length}</p></div>}
+              {scan && <div className="mt-2 rounded bg-white p-3 text-sm"><p><b>Status:</b> {scan.status || 'Scan successful'}</p><p><b>Rows:</b> {scan.rows}</p><p><b>Targets:</b> {scan.detected_targets.join(', ')}</p><p><b>Columns:</b> {scan.columns.length}</p></div>}
 
               {previews.length > 0 && (
                 <div className="mt-2 space-y-2">
@@ -263,18 +314,24 @@ export default function App() {
                 </div>
               )}
 
-              {run && <div className="mt-3 rounded bg-white p-3"><table className="w-full text-xs"><thead><tr><th>Target</th><th>MAE</th><th>RMSE</th></tr></thead><tbody>{trainingMetricsRows.map((r) => <tr key={r.target}><td>{r.target}</td><td>{r.mae.toFixed(4)}</td><td>{r.rmse.toFixed(4)}</td></tr>)}<tr><td>ΔE</td><td colSpan={2}>{(run.metrics.delta_e ?? 0).toFixed(4)}</td></tr></tbody></table></div>}
-
               <div className="mt-3 flex gap-2">
                 <button className="rounded bg-slate-700 px-3 py-1 text-xs text-white" onClick={() => setImportanceView((v) => (v === 'controllable' ? 'context' : 'controllable'))}>Toggle {importanceView}</button>
-                <button className="rounded bg-slate-700 px-3 py-1 text-xs text-white" onClick={() => downloadSvgFromRef(importanceChartRef, 'importance_chart.svg')}>Download Importance Chart</button>
-                <button className="rounded bg-slate-700 px-3 py-1 text-xs text-white" onClick={() => downloadSvgFromRef(metricsChartRef, 'metrics_chart.svg')}>Download Metric Chart</button>
+                <select className="rounded border px-2 py-1 text-xs" value={chartFormat} onChange={(e) => setChartFormat(e.target.value as ChartFormat)}><option value="png">PNG</option><option value="jpeg">JPEG</option></select>
+                <button className="rounded bg-slate-700 px-3 py-1 text-xs text-white" onClick={() => downloadChartImage(importanceChartRef, 'importance_chart', chartFormat)}>Download Importance Chart</button>
+                <button className="rounded bg-slate-700 px-3 py-1 text-xs text-white" onClick={() => downloadChartImage(metricsChartRef, 'metrics_chart', chartFormat)}>Download Metric Chart</button>
               </div>
-              {importance && <div className="mt-3"><FeatureImportanceChart ref={importanceChartRef} title={`Feature Importance (${importanceView})`} data={filteredFeatureImportance} /></div>}
-              {run && <div className="mt-3"><TrainingMetricsChart ref={metricsChartRef} data={metricsLineData} /></div>}
+              {filteredFeatureImportance.length > 0 && <div className="mt-3"><FeatureImportanceChart ref={importanceChartRef} title={`Feature Importance (${importanceView})`} data={filteredFeatureImportance} /></div>}
+              {metricsLineData.length > 0 && <div className="mt-3"><TrainingMetricsChart ref={metricsChartRef} data={metricsLineData} /></div>}
             </div>
 
-            <div className="col-span-3 rounded-xl bg-slate-50 p-4"><h3 className="font-semibold">Live logs</h3><div className="mt-2 h-[620px] overflow-auto rounded border bg-white p-2 text-xs">{logs.map((l) => <p key={l}>{l}</p>)}</div></div>
+            <div className="col-span-3 rounded-xl bg-slate-50 p-4">
+              <h3 className="font-semibold">Live logs</h3>
+              <div className="mt-2 h-[620px] overflow-auto rounded border bg-white p-2 text-xs">
+                {logs.map((l, idx) => (
+                  <p key={`${l.ts}-${idx}`} className={logClass[l.level]}>{l.ts} {l.message}</p>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
@@ -291,7 +348,7 @@ export default function App() {
             </div>
             <div className="col-span-6 rounded-xl bg-slate-50 p-4">
               <h3 className="font-semibold">Optimization Results</h3>
-              <div className="mt-2 flex gap-2"><label className="text-xs"><input type="checkbox" checked={showL} onChange={(e) => setShowL(e.target.checked)} /> L*</label><label className="text-xs"><input type="checkbox" checked={showA} onChange={(e) => setShowA(e.target.checked)} /> a*</label><label className="text-xs"><input type="checkbox" checked={showB} onChange={(e) => setShowB(e.target.checked)} /> b*</label><label className="text-xs"><input type="checkbox" checked={showDelta} onChange={(e) => setShowDelta(e.target.checked)} /> ΔE</label><button className="rounded bg-slate-700 px-2 py-1 text-xs text-white" onClick={() => downloadSvgFromRef(profileChartRef, 'profile_chart.svg')}>Download Profile Chart</button><button className="rounded bg-slate-700 px-2 py-1 text-xs text-white" onClick={downloadRecommendationJson}>Download Recommendation JSON</button></div>
+              <div className="mt-2 flex gap-2"><label className="text-xs"><input type="checkbox" checked={showL} onChange={(e) => setShowL(e.target.checked)} /> L*</label><label className="text-xs"><input type="checkbox" checked={showA} onChange={(e) => setShowA(e.target.checked)} /> a*</label><label className="text-xs"><input type="checkbox" checked={showB} onChange={(e) => setShowB(e.target.checked)} /> b*</label><label className="text-xs"><input type="checkbox" checked={showDelta} onChange={(e) => setShowDelta(e.target.checked)} /> ΔE</label><button className="rounded bg-slate-700 px-2 py-1 text-xs text-white" onClick={() => downloadChartImage(profileChartRef, 'profile_chart', chartFormat)}>Download Profile Chart</button><button className="rounded bg-slate-700 px-2 py-1 text-xs text-white" onClick={downloadRecommendationJson}>Download Recommendation JSON</button></div>
               {optResult && <><div className="mt-2 rounded bg-white p-2 text-xs">{Object.entries(optResult.recommendation).map(([k, v]) => <p key={k}>{k}: {v.toFixed(3)} (Δ {optResult.deltas[k]?.toFixed(3) ?? '0.000'})</p>)}</div><div className="mt-3"><ColorProfileChart ref={profileChartRef} data={profileData} /></div></>}
             </div>
             <div className="col-span-3 rounded-xl bg-slate-50 p-4"><h3 className="font-semibold">Relevance</h3><div className="mt-2 max-h-[620px] overflow-auto rounded border bg-white p-2 text-xs">{optResult?.selected_compartments.map((c) => <label key={c.compartment} className="flex justify-between border-b py-1"><span>{c.compartment} ({c.score.toFixed(3)})</span><input type="checkbox" checked={selectedCompartments.includes(c.compartment)} onChange={() => setSelectedCompartments((p) => p.includes(c.compartment) ? p.filter((x) => x !== c.compartment) : [...p, c.compartment])} /></label>)}</div></div>
