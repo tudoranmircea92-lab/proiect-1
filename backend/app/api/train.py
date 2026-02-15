@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from backend.app.schemas.train import ActivateModelRequest, DatasetScanRequest, FeatureImportanceResponse, RegistryEntry, TrainRequest, TrainSaveRequest
 from backend.app.services.dataset_service import join_process_color, load_datasets, resolve_paths, summarize_dataset
-from backend.app.services.io_utils import read_json
+from backend.app.services.io_utils import SUPPORTED_EXTENSIONS, load_table, read_json
 from backend.app.services.registry_service import activate_model, list_entries
 from backend.app.services.training_service import train_model
 
@@ -24,11 +24,36 @@ def _persist_uploads(files: list[UploadFile]) -> list[str]:
     for f in files:
         if not f.filename:
             continue
+        ext = Path(f.filename).suffix.lower()
+        if ext not in SUPPORTED_EXTENSIONS:
+            raise ValueError(f"Invalid file type for {f.filename}. Please select a .csv, .xlsx, or .parquet file.")
         dest = UPLOAD_DIR / f.filename
-        payload = f.file.read()
-        dest.write_bytes(payload)
+        dest.write_bytes(f.file.read())
         stored.append(str(dest))
     return stored
+
+
+@router.post("/preview")
+async def preview_uploaded_files(files: list[UploadFile] = File(default_factory=list)):
+    try:
+        file_paths = _persist_uploads(files)
+        previews = []
+        for path in file_paths:
+            ext = Path(path).suffix.lower()
+            if ext not in {".csv", ".xlsx"}:
+                continue
+            df = load_table(path)
+            previews.append(
+                {
+                    "file_name": Path(path).name,
+                    "message": "Showing first 5 rows of your file.",
+                    "columns": df.columns.tolist(),
+                    "rows": df.head(5).fillna("").to_dict(orient="records"),
+                }
+            )
+        return {"previews": previews}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/scan")
@@ -40,9 +65,7 @@ async def scan_dataset(
 ):
     try:
         upload_paths = _persist_uploads(files or [])
-        parsed_paths = []
-        if paths:
-            parsed_paths = [p.strip() for p in paths.split(",") if p.strip()]
+        parsed_paths = [p.strip() for p in (paths or "").split(",") if p.strip()]
         body_paths = request.paths if request else []
         final_paths = resolve_paths(upload_paths + parsed_paths + body_paths)
         df = load_datasets(final_paths)
@@ -89,18 +112,11 @@ def run_training(request: TrainRequest):
 
 @router.post("/save")
 def save_training_run(request: TrainSaveRequest):
-    entries = list_entries()
-    entry = next((e for e in entries if e["run_id"] == request.run_id), None)
+    entry = next((e for e in list_entries() if e["run_id"] == request.run_id), None)
     if not entry:
         raise HTTPException(status_code=404, detail="run not found")
     report_path = Path(entry["artifacts"]["metrics"]).with_name("training_report.html")
-    html = f"""
-    <html><body><h1>Training Report {entry['run_id']}</h1>
-    <p>Product: {entry['product_name']}</p>
-    <p>Model type: {entry['model_type']}</p>
-    <pre>{entry['metrics']}</pre>
-    </body></html>
-    """
+    html = f"<html><body><h1>Training Report {entry['run_id']}</h1><p>Product: {entry['product_name']}</p><p>Model type: {entry['model_type']}</p><pre>{entry['metrics']}</pre></body></html>"
     report_path.write_text(html, encoding="utf-8")
     return {"status": "saved", "run_id": request.run_id, "report": str(report_path)}
 
@@ -132,15 +148,13 @@ def set_active(request: ActivateModelRequest):
 
 @router.get("/importance/{run_id}", response_model=FeatureImportanceResponse)
 def get_importance(run_id: str):
-    entries = list_entries()
-    entry = next((e for e in entries if e["run_id"] == run_id), None)
+    entry = next((e for e in list_entries() if e["run_id"] == run_id), None)
     if not entry:
         raise HTTPException(status_code=404, detail="run not found")
     data = read_json(entry["artifacts"]["importance"], {"by_feature": []})
     feature_groups = read_json(entry["artifacts"]["feature_groups"], {})
-    by_comp = {}
-    controllable = 0.0
-    context = 0.0
+    by_comp: dict[str, float] = {}
+    controllable, context = 0.0, 0.0
     for row in data["by_feature"]:
         feat = row["feature"]
         imp = max(0.0, row["importance"])
@@ -153,8 +167,4 @@ def get_importance(run_id: str):
     by_compartment = [{"compartment": k, "importance": float(v)} for k, v in by_comp.items()]
     by_compartment.sort(key=lambda x: x["importance"], reverse=True)
     total = controllable + context or 1.0
-    return {
-        "by_feature": data["by_feature"][:30],
-        "by_compartment": by_compartment,
-        "share": {"controllable": controllable / total, "context": context / total},
-    }
+    return {"by_feature": data["by_feature"][:30], "by_compartment": by_compartment, "share": {"controllable": controllable / total, "context": context / total}}

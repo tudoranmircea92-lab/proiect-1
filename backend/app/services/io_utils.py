@@ -6,14 +6,24 @@ from pathlib import Path
 import pandas as pd
 
 
-def load_parquet(path: str | Path) -> pd.DataFrame:
+SUPPORTED_EXTENSIONS = {".parquet", ".csv", ".xlsx"}
+
+
+def load_table(path: str | Path) -> pd.DataFrame:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Path not found: {path}")
-    try:
-        return pd.read_parquet(p, engine="fastparquet")
-    except Exception:
-        return pd.read_parquet(p, engine="pyarrow")
+    suffix = p.suffix.lower()
+    if suffix == ".parquet":
+        try:
+            return pd.read_parquet(p, engine="fastparquet")
+        except Exception:
+            return pd.read_parquet(p, engine="pyarrow")
+    if suffix == ".csv":
+        return pd.read_csv(p)
+    if suffix == ".xlsx":
+        return pd.read_excel(p)
+    raise ValueError(f"Unsupported file extension: {suffix}")
 
 
 def write_json(path: str | Path, payload: dict) -> None:

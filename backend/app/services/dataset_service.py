@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from backend.app.core.constants import MANDATORY_COLUMN, PLATE_COLUMN, TIMESTAMP_CANDIDATES, detect_compartments
-from backend.app.services.io_utils import load_parquet
+from backend.app.services.io_utils import SUPPORTED_EXTENSIONS, load_table
 
 
 @dataclass
@@ -30,14 +30,14 @@ def _infer_target_columns(columns: list[str]) -> list[str]:
 def load_datasets(paths: list[str]) -> pd.DataFrame:
     if not paths:
         raise ValueError("At least one dataset path is required")
-    frames = [load_parquet(path) for path in paths]
+    frames = [load_table(path) for path in paths]
     merged = pd.concat(frames, ignore_index=True)
     return merged
 
 
 def join_process_color(process_path: str, color_path: str, tolerance_minutes: int = 0) -> pd.DataFrame:
-    proc = load_parquet(process_path)
-    col = load_parquet(color_path)
+    proc = load_table(process_path)
+    col = load_table(color_path)
     proc_ts = _infer_timestamp_column(proc.columns.tolist())
     col_ts = _infer_timestamp_column(col.columns.tolist())
     if proc_ts is None or col_ts is None:
@@ -93,7 +93,8 @@ def resolve_paths(input_paths: list[str]) -> list[str]:
     for p in input_paths:
         path = Path(p)
         if path.is_dir():
-            out.extend([str(x) for x in path.glob("*.parquet")])
-        elif path.is_file() and path.suffix == ".parquet":
+            for ext in SUPPORTED_EXTENSIONS:
+                out.extend([str(x) for x in path.glob(f"*{ext}")])
+        elif path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
             out.append(str(path))
     return sorted(set(out))
