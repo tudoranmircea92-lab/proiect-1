@@ -97,7 +97,7 @@ export default function TrainingSettings({ config, setConfig, onTrain, canTrain,
       </select>
       <input
         className="input mt-8"
-        placeholder="Manual overrides (JSON), ex: {\"c1.pwr\":55}"
+        placeholder='Manual overrides (JSON), ex: {"c1.pwr":55}'
         value={config.manualOverridesText}
         onChange={(e) => setConfig({ ...config, manualOverridesText: e.target.value })}
       />
