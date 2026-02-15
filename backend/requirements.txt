@@ -8,3 +8,4 @@ openpyxl
 numpy
 pyarrow
 joblib
+python-dotenv
