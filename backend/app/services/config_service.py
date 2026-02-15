@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.io_utils import read_json, write_json
+from backend.app.services.io_utils import read_json, write_json
 
 CONFIG_PATH = Path("backend/app/data/machine_config.json")
 

@@ -19,6 +19,9 @@ class DatasetSummary(BaseModel):
     products: list[str]
     compartments: list[str]
     columns: list[str]
+    detected_plate_col: str | None
+    detected_timestamp_col: str | None
+    detected_targets: list[str]
 
 
 class TrainRequest(BaseModel):
@@ -45,11 +48,15 @@ class TrainRunResponse(BaseModel):
     artifacts: dict[str, str]
 
 
+class TrainSaveRequest(BaseModel):
+    run_id: str
+
+
 class RegistryEntry(BaseModel):
     run_id: str
     product_name: str
     model_type: str
-    created_at: datetime
+    created_at: str
     is_active: bool
     metrics: dict
 

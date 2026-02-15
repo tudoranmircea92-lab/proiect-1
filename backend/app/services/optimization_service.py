@@ -5,10 +5,10 @@ import math
 import joblib
 import numpy as np
 
-from app.core.constants import CONTROLLABLE_SUFFIXES, is_controllable_column
-from app.services.config_service import load_machine_config
-from app.services.io_utils import read_json
-from app.services.registry_service import get_active_model
+from backend.app.core.constants import CONTROLLABLE_SUFFIXES, is_controllable_column
+from backend.app.services.config_service import load_machine_config
+from backend.app.services.io_utils import read_json
+from backend.app.services.registry_service import add_optimize_result, get_active_model, stamp
 
 
 MODE_WEIGHTS = {
@@ -114,16 +114,22 @@ def optimize(product_name: str, current_state: dict, target_color: dict[str, flo
 
     prediction = model.predict([candidate])[0]
     result_color = {targets[i]: float(prediction[i]) for i in range(len(targets))}
+    base_prediction = model.predict([{f: current_state.get(f, 0.0) for f in features}])[0]
+    before_color = {targets[i]: float(base_prediction[i]) for i in range(len(targets))}
     score = _delta_e(prediction, target)
 
     recommendation = {k: float(v) for k, v in candidate.items() if is_controllable_column(k) and k in changed}
-    return {
+    payload = {
         "model_run_id": entry["run_id"],
         "product_name": product_name,
         "selected_compartments": selected,
         "recommendation": recommendation,
         "deltas": deltas,
         "predicted_color": result_color,
+        "before_color": before_color,
         "score": score,
         "changed_keys": changed,
+        "created_at": stamp(),
     }
+    add_optimize_result(payload)
+    return payload

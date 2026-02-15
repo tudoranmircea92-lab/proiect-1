@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from app.core.constants import MANDATORY_COLUMN, PLATE_COLUMN, TIMESTAMP_CANDIDATES, detect_compartments
-from app.services.io_utils import load_parquet
+from backend.app.core.constants import MANDATORY_COLUMN, PLATE_COLUMN, TIMESTAMP_CANDIDATES, detect_compartments
+from backend.app.services.io_utils import load_parquet
 
 
 @dataclass
@@ -20,6 +20,11 @@ def _infer_timestamp_column(columns: list[str]) -> str | None:
         if col in columns:
             return col
     return None
+
+
+def _infer_target_columns(columns: list[str]) -> list[str]:
+    hints = [c for c in columns if ('L_star' in c or 'a_star' in c or 'b_star' in c)]
+    return sorted(hints)
 
 
 def load_datasets(paths: list[str]) -> pd.DataFrame:
@@ -65,7 +70,7 @@ def summarize_dataset(df: pd.DataFrame, target_columns: list[str] | None = None)
         date_min = series.min()
         date_max = series.max()
     missing = {}
-    for target in target_columns or []:
+    for target in target_columns or _infer_target_columns(df.columns.tolist()):
         if target in df.columns:
             missing[target] = float(df[target].isna().mean())
     return {
@@ -77,6 +82,9 @@ def summarize_dataset(df: pd.DataFrame, target_columns: list[str] | None = None)
         "products": sorted(df[MANDATORY_COLUMN].dropna().astype(str).unique().tolist()),
         "compartments": detect_compartments(df.columns.tolist()),
         "columns": sorted(df.columns.tolist()),
+        "detected_plate_col": PLATE_COLUMN if PLATE_COLUMN in df.columns else None,
+        "detected_timestamp_col": ts_col,
+        "detected_targets": _infer_target_columns(df.columns.tolist()),
     }
 
 

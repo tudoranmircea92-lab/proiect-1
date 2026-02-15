@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.optimize import router as optimize_router
-from app.api.train import router as train_router
+from backend.app.api.optimize import router as optimize_router
+from backend.app.api.train import router as train_router
 
 app = FastAPI(title="Coating Optimizer API", version="1.0.0")
 

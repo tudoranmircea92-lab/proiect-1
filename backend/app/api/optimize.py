@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from app.schemas.optimize import MachineConfigPatch, OptimizeRequest, OptimizeResponse
-from app.services.config_service import load_machine_config, save_machine_config
-from app.services.optimization_service import optimize
+from backend.app.schemas.optimize import MachineConfigPatch, OptimizeRequest, OptimizeResponse
+from backend.app.services.config_service import load_machine_config, save_machine_config
+from backend.app.services.optimization_service import optimize
+from backend.app.services.registry_service import list_optimize_results
 
 router = APIRouter(prefix="/optimize", tags=["optimize"])
 
@@ -22,6 +23,11 @@ def run_optimization(request: OptimizeRequest):
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/results")
+def get_results(limit: int = 25):
+    return {"results": list_optimize_results(limit)}
 
 
 @router.get("/machine-config")

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 
-from app.schemas.train import ActivateModelRequest, DatasetScanRequest, FeatureImportanceResponse, RegistryEntry, TrainRequest
-from app.services.dataset_service import join_process_color, load_datasets, resolve_paths, summarize_dataset
-from app.services.io_utils import read_json
-from app.services.registry_service import activate_model, list_entries
-from app.services.training_service import train_model
+from backend.app.schemas.train import ActivateModelRequest, DatasetScanRequest, FeatureImportanceResponse, RegistryEntry, TrainRequest, TrainSaveRequest
+from backend.app.services.dataset_service import join_process_color, load_datasets, resolve_paths, summarize_dataset
+from backend.app.services.io_utils import read_json, write_json
+from backend.app.services.registry_service import activate_model, list_entries
+from backend.app.services.training_service import train_model
 
 router = APIRouter(prefix="/train", tags=["train"])
 
 
 @router.post("/scan")
+@router.post("/scan_source")
 def scan_dataset(request: DatasetScanRequest):
     try:
         paths = resolve_paths(request.paths)
@@ -54,15 +57,28 @@ def run_training(request: TrainRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/save")
+def save_training_run(request: TrainSaveRequest):
+    entries = list_entries()
+    entry = next((e for e in entries if e["run_id"] == request.run_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="run not found")
+    report_path = Path(entry["artifacts"]["metrics"]).with_name("training_report.html")
+    html = f"""
+    <html><body><h1>Training Report {entry['run_id']}</h1>
+    <p>Product: {entry['product_name']}</p>
+    <p>Model type: {entry['model_type']}</p>
+    <pre>{entry['metrics']}</pre>
+    </body></html>
+    """
+    report_path.write_text(html, encoding="utf-8")
+    return {"status": "saved", "run_id": request.run_id, "report": str(report_path)}
+
+
 @router.get("/registry", response_model=list[RegistryEntry])
+@router.get("/runs", response_model=list[RegistryEntry])
 def get_registry(product_name: str | None = None):
-    return [
-        {
-            **e,
-            "is_active": False,
-        }
-        for e in list_entries(product_name)
-    ]
+    return list_entries(product_name)
 
 
 @router.post("/registry/activate")

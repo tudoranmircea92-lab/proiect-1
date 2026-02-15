@@ -14,9 +14,9 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
-from app.core.constants import LEAKAGE_COLUMNS, MANDATORY_COLUMN, PLATE_COLUMN, is_controllable_column, is_process_context_column
-from app.services.registry_service import add_entry, ensure_registry_dirs, stamp
-from app.services.io_utils import write_json
+from backend.app.core.constants import LEAKAGE_COLUMNS, MANDATORY_COLUMN, PLATE_COLUMN, is_controllable_column, is_process_context_column
+from backend.app.services.registry_service import add_entry, ensure_registry_dirs, stamp
+from backend.app.services.io_utils import write_json
 
 
 def _feature_sets(df: pd.DataFrame, targets: list[str], model_type: str) -> tuple[list[str], list[str]]:

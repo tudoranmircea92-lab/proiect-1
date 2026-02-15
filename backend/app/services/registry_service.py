@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from app.services.io_utils import read_json, write_json
+from backend.app.services.io_utils import read_json, write_json
 
 REGISTRY_ROOT = Path("backend/app/registry")
 INDEX_FILE = REGISTRY_ROOT / "index.json"
+RESULTS_FILE = REGISTRY_ROOT / "optimize_results.json"
 
 
 def _load_index() -> dict:
@@ -24,10 +25,16 @@ def add_entry(entry: dict) -> None:
 
 
 def list_entries(product_name: str | None = None) -> list[dict]:
-    entries = _load_index().get("entries", [])
+    index = _load_index()
+    entries = index.get("entries", [])
+    active = index.get("active", {})
     if product_name:
         entries = [e for e in entries if e.get("product_name") == product_name]
-    return sorted(entries, key=lambda x: x.get("created_at", ""), reverse=True)
+    enriched = []
+    for e in entries:
+        key = f"{e['product_name']}::{e['model_type']}"
+        enriched.append({**e, "is_active": active.get(key) == e["run_id"]})
+    return sorted(enriched, key=lambda x: x.get("created_at", ""), reverse=True)
 
 
 def activate_model(run_id: str) -> dict:
@@ -55,6 +62,17 @@ def ensure_registry_dirs(run_id: str) -> Path:
     path = REGISTRY_ROOT / run_id
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def add_optimize_result(payload: dict) -> None:
+    data = read_json(RESULTS_FILE, {"results": []})
+    data["results"].append(payload)
+    write_json(RESULTS_FILE, data)
+
+
+def list_optimize_results(limit: int = 25) -> list[dict]:
+    data = read_json(RESULTS_FILE, {"results": []})
+    return list(reversed(data["results"][-limit:]))
 
 
 def stamp() -> str:

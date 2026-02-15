@@ -21,8 +21,10 @@ class OptimizeResponse(BaseModel):
     recommendation: dict[str, float]
     deltas: dict[str, float]
     predicted_color: dict[str, float]
+    before_color: dict[str, float]
     score: float
     changed_keys: list[str]
+    created_at: str
 
 
 class MachineConfigPatch(BaseModel):
