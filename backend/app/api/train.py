@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from backend.app.schemas.train import ActivateModelRequest, DatasetScanRequest, FeatureImportanceResponse, RegistryEntry, TrainRequest, TrainSaveRequest
@@ -13,14 +13,43 @@ from backend.app.services.training_service import train_model
 
 router = APIRouter(prefix="/train", tags=["train"])
 
+UPLOAD_DIR = Path("backend/app/data/uploads")
+
+
+def _persist_uploads(files: list[UploadFile]) -> list[str]:
+    if not files:
+        return []
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    stored: list[str] = []
+    for f in files:
+        if not f.filename:
+            continue
+        dest = UPLOAD_DIR / f.filename
+        payload = f.file.read()
+        dest.write_bytes(payload)
+        stored.append(str(dest))
+    return stored
+
 
 @router.post("/scan")
 @router.post("/scan_source")
-def scan_dataset(request: DatasetScanRequest):
+async def scan_dataset(
+    request: DatasetScanRequest | None = None,
+    files: list[UploadFile] | None = File(default=None),
+    paths: str | None = Form(default=None),
+):
     try:
-        paths = resolve_paths(request.paths)
-        df = load_datasets(paths)
-        return summarize_dataset(df)
+        upload_paths = _persist_uploads(files or [])
+        parsed_paths = []
+        if paths:
+            parsed_paths = [p.strip() for p in paths.split(",") if p.strip()]
+        body_paths = request.paths if request else []
+        final_paths = resolve_paths(upload_paths + parsed_paths + body_paths)
+        df = load_datasets(final_paths)
+        summary = summarize_dataset(df)
+        summary["resolved_paths"] = final_paths
+        summary["selected_files"] = [Path(p).name for p in final_paths]
+        return summary
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

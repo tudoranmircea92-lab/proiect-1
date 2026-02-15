@@ -19,6 +19,8 @@ export type ScanSummary = {
   products: string[]
   detected_targets: string[]
   compartments: string[]
+  selected_files?: string[]
+  resolved_paths?: string[]
 }
 
 export type ImportanceResponse = {
