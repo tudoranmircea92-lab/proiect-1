@@ -33,6 +33,7 @@ class TrainConfig(BaseModel):
         validation_alias=AliasChoices("estimator_type", "model_type"),
         serialization_alias="estimator_type",
     )
+    training_mode: Literal["fast", "balanced", "maximum_accuracy"] = "balanced"
     split: SplitConfig = SplitConfig()
     features: FeatureToggleConfig = FeatureToggleConfig()
 
@@ -159,14 +160,24 @@ class DataUploadResponse(BaseModel):
 
 
 class TrainResponse(BaseModel):
+    model_id: str
     artifact_id: str
-    metrics_per_target: dict[str, dict[str, float]]
-    aggregate_metrics: dict[str, float]
+    train_rows: int
+    val_rows: int
+    feature_count: int
+    knob_count: int
+    feature_names: list[str]
+    metrics_per_target: dict[str, dict[str, float | None]]
+    metrics_summary: dict[str, float | None]
+    aggregate_metrics: dict[str, float | None]
     split_counts: dict[str, int]
     dropped_rows_missing_targets: int
     selected_feature_counts: dict[str, int]
     selected_features: list[str]
     estimator_type: str
+    trained_at: str
+    dataset_id: str
+    random_seed: int
 
 
 class PredictResponse(BaseModel):

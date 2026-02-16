@@ -107,7 +107,7 @@ def train(payload: TrainRequest):
     job_id = jobs.create()
 
     def work():
-        result = trainer.train(repo.get(payload.dataset_id), payload.config)
+        result = trainer.train(repo.get(payload.dataset_id), payload.config, dataset_id=payload.dataset_id)
         return sanitize_jsonable(result)
 
     jobs.run_async(job_id, lambda: _job(work, [(10, 'Preparing dataset'), (30, 'Building feature matrix'), (55, 'Training model'), (80, 'Evaluating'), (95, 'Saving artifacts'), (100, 'Done')])(job_id))

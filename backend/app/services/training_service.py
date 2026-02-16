@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
@@ -28,19 +29,27 @@ class TrainingService:
         self.current_pipeline: Pipeline | None = None
         self.feature_schema: dict = {}
 
-    def _model_for_type(self, model_type: str):
+    def _mode_params(self, training_mode: str) -> dict:
+        if training_mode == "fast":
+            return {"n_estimators": 120, "max_iter": 120}
+        if training_mode == "maximum_accuracy":
+            return {"n_estimators": 600, "max_iter": 450}
+        return {"n_estimators": 300, "max_iter": 250}
+
+    def _model_for_type(self, model_type: str, training_mode: str):
+        params = self._mode_params(training_mode)
         if model_type == "hist_gradient_boosting":
-            return MultiOutputRegressor(HistGradientBoostingRegressor(random_state=42))
+            return MultiOutputRegressor(HistGradientBoostingRegressor(random_state=42, max_iter=params["max_iter"]))
         if model_type == "random_forest":
-            return RandomForestRegressor(n_estimators=300, random_state=42, n_jobs=-1)
+            return RandomForestRegressor(n_estimators=params["n_estimators"], random_state=42, n_jobs=-1)
         if model_type == "xgboost":
             from xgboost import XGBRegressor  # type: ignore
 
-            return MultiOutputRegressor(XGBRegressor(n_estimators=300, max_depth=6, learning_rate=0.05, random_state=42))
+            return MultiOutputRegressor(XGBRegressor(n_estimators=params["n_estimators"], max_depth=6, learning_rate=0.05, random_state=42))
         if model_type == "lightgbm":
             from lightgbm import LGBMRegressor  # type: ignore
 
-            return MultiOutputRegressor(LGBMRegressor(n_estimators=300, learning_rate=0.05, random_state=42))
+            return MultiOutputRegressor(LGBMRegressor(n_estimators=params["n_estimators"], learning_rate=0.05, random_state=42))
         if model_type == "catboost":
             from catboost import CatBoostRegressor  # type: ignore
 
@@ -79,7 +88,7 @@ class TrainingService:
             remainder="drop",
         )
 
-    def train(self, df: pd.DataFrame, config: TrainConfig) -> dict:
+    def train(self, df: pd.DataFrame, config: TrainConfig, dataset_id: str = "") -> dict:
         missing_targets = [c for c in TARGET_COLUMNS if c not in df.columns]
         if missing_targets:
             raise ValueError(f"Missing required target columns: {missing_targets}")
@@ -111,26 +120,43 @@ class TrainingService:
             )
 
         preprocessor = self._build_preprocessor(selection.control_knobs + selection.context_numeric, selection.context_categorical, config.estimator_type)
-        model = self._model_for_type(config.estimator_type)
+        model = self._model_for_type(config.estimator_type, config.training_mode)
         pipeline = Pipeline([
             ("preprocessor", preprocessor),
             ("model", model),
         ])
 
         pipeline.fit(X_train, y_train)
-        preds = pipeline.predict(X_val)
+        preds_val = pipeline.predict(X_val)
+        preds_train = pipeline.predict(X_train)
 
-        metrics_per_target: dict[str, dict[str, float]] = {}
+        metrics_per_target: dict[str, dict[str, float | None]] = {}
         mae_means, mae_stds = [], []
+        mae_l, mae_a, mae_b, all_val = [], [], [], []
+
         for i, target in enumerate(TARGET_COLUMNS):
-            mae = float(mean_absolute_error(y_val.iloc[:, i], preds[:, i]))
-            rmse = float(np.sqrt(mean_squared_error(y_val.iloc[:, i], preds[:, i])))
-            metrics_per_target[target] = {"mae": mae, "rmse": rmse}
-            (mae_means if target.endswith("_mean") else mae_stds).append(mae)
+            val_mae = float(mean_absolute_error(y_val.iloc[:, i], preds_val[:, i]))
+            train_mae = float(mean_absolute_error(y_train.iloc[:, i], preds_train[:, i]))
+            val_rmse = float(np.sqrt(mean_squared_error(y_val.iloc[:, i], preds_val[:, i])))
+            metrics_per_target[target] = {"train_mae": train_mae, "validation_mae": val_mae, "validation_rmse": val_rmse}
+            all_val.append(val_mae)
+            if target.startswith("L_"):
+                mae_l.append(val_mae)
+            if target.startswith("a_"):
+                mae_a.append(val_mae)
+            if target.startswith("b_"):
+                mae_b.append(val_mae)
+            (mae_means if target.endswith("_mean") else mae_stds).append(val_mae)
 
         aggregate_metrics = {
-            "mean_mae_means": float(np.mean(mae_means)),
-            "mean_mae_stds": float(np.mean(mae_stds)),
+            "mean_mae_means": float(np.mean(mae_means)) if mae_means else None,
+            "mean_mae_stds": float(np.mean(mae_stds)) if mae_stds else None,
+        }
+        metrics_summary = {
+            "mae_L": float(np.mean(mae_l)) if mae_l else None,
+            "mae_a": float(np.mean(mae_a)) if mae_a else None,
+            "mae_b": float(np.mean(mae_b)) if mae_b else None,
+            "overall_mean_error": float(np.mean(all_val)) if all_val else None,
         }
 
         artifact_id = uuid.uuid4().hex[:10]
@@ -149,8 +175,17 @@ class TrainingService:
         (run_dir / "feature_schema.json").write_text(json.dumps(schema, indent=2), encoding="utf-8")
         (run_dir / "target_columns.json").write_text(json.dumps(TARGET_COLUMNS, indent=2), encoding="utf-8")
 
+        trained_at = datetime.now(timezone.utc).isoformat()
         report = {
+            "model_id": artifact_id,
+            "artifact_id": artifact_id,
+            "train_rows": int(len(X_train)),
+            "val_rows": int(len(X_val)),
+            "feature_count": int(len(selection.selected_features)),
+            "knob_count": int(len(selection.control_knobs)),
+            "feature_names": selection.selected_features,
             "metrics_per_target": metrics_per_target,
+            "metrics_summary": metrics_summary,
             "aggregate_metrics": aggregate_metrics,
             "split_counts": {"train": len(X_train), "val": len(X_val)},
             "dropped_rows_missing_targets": dropped_rows,
@@ -158,12 +193,15 @@ class TrainingService:
             "selected_features": selection.selected_features,
             "estimator_type": config.estimator_type,
             "feature_schema": schema,
+            "trained_at": trained_at,
+            "dataset_id": dataset_id,
+            "random_seed": config.split.random_seed,
         }
         (run_dir / "training_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 
         self.current_pipeline = pipeline
         self.feature_schema = schema
-        return {"artifact_id": artifact_id, **report}
+        return report
 
     def predict(self, control_knobs: dict[str, float], context: dict[str, object]) -> dict[str, float]:
         if self.current_pipeline is None or not self.feature_schema:

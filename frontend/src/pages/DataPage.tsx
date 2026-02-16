@@ -25,13 +25,15 @@ export function DataPage() {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [stage, setStage] = useState('')
-  const { setDatasetId, setDatasetPath, setDatasetSummary, setModelTrained } = useDataset()
+  const { setDatasetId, setDatasetPath, setDatasetSummary, setDatasetName, setGroupedColumns, setModelTrained } = useDataset()
 
   const onDone = (profile: LoadResp) => {
     setData(profile)
     setDatasetId(profile.dataset_id)
     setDatasetPath(profile.saved_path || '')
     setDatasetSummary({ rows: profile.rows, columns: profile.columns })
+    setDatasetName((profile.saved_path || selectedFile?.name || path || "dataset").split(/[\\/]/).pop() || "dataset")
+    setGroupedColumns(profile.grouped_columns || null)
     setModelTrained(false)
     setToast(`Loaded ${profile.rows} rows, ${profile.columns} columns. Detected knobs: pwr=${profile.grouped_columns.power?.length ?? 0}, mainGas=${profile.grouped_columns.main_gas?.length ?? 0}, segmentGas=${profile.grouped_columns.segment_gas?.length ?? 0}`)
   }
