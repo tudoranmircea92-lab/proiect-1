@@ -46,6 +46,7 @@ class DataRepository:
     def profile(self, preview_rows: int = 20) -> dict:
         df = self.get()
         grouped = detect_groups(df)
+        knob_debug = grouped.pop("knob_debug", {})
         missing_summary = {col: int(df[col].isna().sum()) for col in df.columns}
         safe_preview = df.head(preview_rows).copy()
         safe_preview = safe_preview.where(pd.notna(safe_preview), None)
@@ -55,4 +56,5 @@ class DataRepository:
             "preview": safe_preview.to_dict(orient="records"),
             "grouped_columns": grouped,
             "missing_summary": missing_summary,
+            "debug": knob_debug,
         }

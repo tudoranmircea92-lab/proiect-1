@@ -144,6 +144,7 @@ class DataLoadResponse(BaseModel):
     preview: list[dict[str, Any]]
     grouped_columns: dict[str, list[str]]
     missing_summary: dict[str, int]
+    debug: dict[str, Any] = Field(default_factory=dict)
 
 
 class TrainResponse(BaseModel):
