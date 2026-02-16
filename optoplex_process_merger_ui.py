@@ -679,6 +679,8 @@ def load_process_dataset(files: List[Path], log, progress=None, progress_base: f
     long_all = pd.concat(longs, ignore_index=True)
     long_all = long_all.sort_values(["ts", "plate", "comp"]).groupby(["ts", "plate", "comp"], as_index=False).first()
     wide = _pivot_wide(long_all)
+    # De-fragment before adding/sorting key columns to avoid pandas PerformanceWarning
+    wide = wide.copy()
     comp_cols = [c for c in wide.columns if c.startswith("c") and "." in c]
     rel_comps = sorted({int(c.split(".", 1)[0][1:]) for c in comp_cols if c.split(".", 1)[0][1:].isdigit()})
     log(f"Relevant compartments in output: {len(rel_comps)}")
