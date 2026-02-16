@@ -26,10 +26,11 @@ export function PlasmaStabilityPage() {
     } catch (e:any) { setError(e.message) } finally { setLoading(false) }
   }
 
-  const chartData = useMemo(()=> result?.per_cathode ?? [], [result])
+  const fmt = (v: any) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(4))
+  const chartData = useMemo(()=> (result?.per_cathode ?? []).filter((r:any)=> Number.isFinite(Number(r.cv_power))), [result])
   const firstSeries = useMemo(()=> {
     const keys = Object.keys(result?.timeseries ?? {})
-    return keys.length ? result.timeseries[keys[0]] : []
+    return keys.length ? (result.timeseries[keys[0]] || []).filter((r:any)=> Number.isFinite(Number(r.cv_power))) : []
   }, [result])
 
   return <div className='space-y-6'>
@@ -49,15 +50,15 @@ export function PlasmaStabilityPage() {
 
     {result && <>
       <div className='grid md:grid-cols-4 gap-3'>
-        <Card><p className='text-sm font-medium'>Overall score</p><p className='text-2xl font-semibold'>{Number(result.summary.overall_stability_score ?? 0).toFixed(4)}</p></Card>
-        <Card><p className='text-sm font-medium'>Vacuum CV</p><p className='text-2xl font-semibold'>{Number(result.summary.vacuum_cv ?? 0).toFixed(4)}</p></Card>
-        <Card><p className='text-sm font-medium'>Uniformity current</p><p className='text-2xl font-semibold'>{Number(result.summary.uniformity_cv_current ?? 0).toFixed(4)}</p></Card>
-        <Card><p className='text-sm font-medium'>Uniformity power</p><p className='text-2xl font-semibold'>{Number(result.summary.uniformity_cv_power ?? 0).toFixed(4)}</p></Card>
+        <Card><p className='text-sm font-medium'>Overall score</p><p className='text-2xl font-semibold'>{fmt(result.summary.overall_stability_score)}</p></Card>
+        <Card><p className='text-sm font-medium'>Vacuum CV</p><p className='text-2xl font-semibold'>{fmt(result.summary.vacuum_cv)}</p></Card>
+        <Card><p className='text-sm font-medium'>Uniformity current</p><p className='text-2xl font-semibold'>{fmt(result.summary.uniformity_cv_current)}</p></Card>
+        <Card><p className='text-sm font-medium'>Uniformity power</p><p className='text-2xl font-semibold'>{fmt(result.summary.uniformity_cv_power)}</p></Card>
       </div>
 
       <Card className='h-72'><ResponsiveContainer width='100%' height='100%'><BarChart data={chartData}><CartesianGrid strokeDasharray='3 3'/><XAxis dataKey='cathode_id'/><YAxis/><Tooltip/><Bar dataKey='cv_power' fill='#2563eb'/></BarChart></ResponsiveContainer></Card>
       <Card className='h-72'><ResponsiveContainer width='100%' height='100%'><LineChart data={firstSeries}><CartesianGrid strokeDasharray='3 3'/><XAxis dataKey='ts'/><YAxis/><Tooltip/><Line type='monotone' dataKey='cv_power' dot={false} stroke='#2563eb'/></LineChart></ResponsiveContainer></Card>
-      <Card className='overflow-auto'><table className='min-w-full text-sm'><thead><tr className='border-b'><th className='p-2 text-left'>Cathode</th><th className='p-2 text-left'>CV power</th><th className='p-2 text-left'>CV current</th></tr></thead><tbody>{chartData.map((r:any)=><tr key={r.cathode_id} className='border-b'><td className='p-2'>{r.cathode_id}</td><td className='p-2'>{Number(r.cv_power).toFixed(4)}</td><td className='p-2'>{Number(r.cv_current).toFixed(4)}</td></tr>)}</tbody></table></Card>
+      <Card className='overflow-auto'><table className='min-w-full text-sm'><thead><tr className='border-b'><th className='p-2 text-left'>Cathode</th><th className='p-2 text-left'>CV power</th><th className='p-2 text-left'>CV current</th></tr></thead><tbody>{chartData.map((r:any)=><tr key={r.cathode_id} className='border-b'><td className='p-2'>{r.cathode_id}</td><td className='p-2'>{fmt(r.cv_power)}</td><td className='p-2'>{fmt(r.cv_current)}</td></tr>)}</tbody></table></Card>
       <Card><Button variant='secondary' onClick={()=>window.open('http://localhost:8000/api/plasma_stability/export?format=csv')}><Download size={16} className='inline mr-1'/>Export</Button></Card>
     </>}
   </div>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class LoadDataRequest(BaseModel):
@@ -27,7 +27,12 @@ class SplitConfig(BaseModel):
 
 
 class TrainConfig(BaseModel):
-    model_type: Literal["hist_gradient_boosting", "random_forest", "xgboost", "lightgbm", "catboost"] = "hist_gradient_boosting"
+    model_config = ConfigDict(populate_by_name=True)
+    estimator_type: Literal["hist_gradient_boosting", "random_forest", "xgboost", "lightgbm", "catboost"] = Field(
+        default="hist_gradient_boosting",
+        validation_alias=AliasChoices("estimator_type", "model_type"),
+        serialization_alias="estimator_type",
+    )
     split: SplitConfig = SplitConfig()
     features: FeatureToggleConfig = FeatureToggleConfig()
 
@@ -161,7 +166,7 @@ class TrainResponse(BaseModel):
     dropped_rows_missing_targets: int
     selected_feature_counts: dict[str, int]
     selected_features: list[str]
-    model_type: str
+    estimator_type: str
 
 
 class PredictResponse(BaseModel):

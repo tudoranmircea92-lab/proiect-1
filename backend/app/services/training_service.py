@@ -45,7 +45,7 @@ class TrainingService:
             from catboost import CatBoostRegressor  # type: ignore
 
             return MultiOutputRegressor(CatBoostRegressor(verbose=0, random_seed=42))
-        raise ValueError(f"Unsupported model_type: {model_type}")
+        raise ValueError(f"Unsupported estimator_type: {model_type}")
 
     def available_models(self) -> list[str]:
         models = ["hist_gradient_boosting", "random_forest"]
@@ -110,8 +110,8 @@ class TrainingService:
                 X, y, train_size=config.split.ratio, random_state=config.split.random_seed
             )
 
-        preprocessor = self._build_preprocessor(selection.control_knobs + selection.context_numeric, selection.context_categorical, config.model_type)
-        model = self._model_for_type(config.model_type)
+        preprocessor = self._build_preprocessor(selection.control_knobs + selection.context_numeric, selection.context_categorical, config.estimator_type)
+        model = self._model_for_type(config.estimator_type)
         pipeline = Pipeline([
             ("preprocessor", preprocessor),
             ("model", model),
@@ -156,7 +156,7 @@ class TrainingService:
             "dropped_rows_missing_targets": dropped_rows,
             "selected_feature_counts": selection.counts,
             "selected_features": selection.selected_features,
-            "model_type": config.model_type,
+            "estimator_type": config.estimator_type,
             "feature_schema": schema,
         }
         (run_dir / "training_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

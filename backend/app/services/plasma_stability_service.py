@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from app.models.schemas import PlasmaStabilityRequest
+from app.services.json_sanitize import sanitize_jsonable
 
 
 @dataclass
@@ -46,10 +47,15 @@ class PlasmaStabilityService:
         return json.dumps(payload, sort_keys=True)
 
     @staticmethod
-    def _safe_cv(series: pd.Series) -> float:
-        mean = float(series.mean()) if len(series) else 0.0
-        std = float(series.std(ddof=0)) if len(series) else 0.0
-        return float(std / (abs(mean) + 1e-9))
+    def _safe_cv(series: pd.Series) -> float | None:
+        eps = 1e-12
+        vals = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+        vals = vals[np.isfinite(vals)]
+        if vals.size < 2:
+            return None
+        mean = float(np.nanmean(vals))
+        std = float(np.nanstd(vals, ddof=0))
+        return float(std / max(abs(mean), eps)) if np.isfinite(std) else None
 
     @staticmethod
     def _parse_cathode(col: str) -> str | None:
@@ -97,6 +103,7 @@ class PlasmaStabilityService:
             mask = mask & tod.apply(lambda x: x is not pd.NaT and t_from <= x <= t_to)
 
         out = df.loc[mask].copy()
+        out.replace([np.inf, -np.inf], np.nan, inplace=True)
         if out.empty:
             raise ValueError("No records found for selected date/time range.")
         return out
@@ -135,23 +142,31 @@ class PlasmaStabilityService:
             active_df = df[active_mask] if not req.show_inactive else df
             sample_count = int(len(active_df))
 
+            if sample_count < 1:
+                per_cathode.append({"cathode_id": cathode, "cv_current": None, "cv_power": None, "ripple_current": None, "ripple_power": None, "active_rate": 0.0, "sample_count": 0, "n_active_samples": 0})
+                continue
+
             sigma_current_cols = [c for c in sigma_cols if cathode in c and "current" in c.lower()]
             sigma_power_cols = [c for c in sigma_cols if cathode in c and "power" in c.lower()]
 
-            cv_current = 0.0
-            cv_power = 0.0
-            ripple_current = 0.0
-            ripple_power = 0.0
+            cv_current = None
+            cv_power = None
+            ripple_current = None
+            ripple_power = None
 
             if sigma_current_cols:
-                cv_current = float(active_df[sigma_current_cols[0]].fillna(0.0).mean())
+                v = pd.to_numeric(active_df[sigma_current_cols[0]], errors="coerce").to_numpy(dtype=float)
+                v = v[np.isfinite(v)]
+                cv_current = float(np.nanmean(v)) if v.size else None
                 ripple_current = cv_current
             elif cur_col and cur_col in active_df.columns:
                 cv_current = self._safe_cv(active_df[cur_col].fillna(0.0))
                 ripple_current = cv_current
 
             if sigma_power_cols:
-                cv_power = float(active_df[sigma_power_cols[0]].fillna(0.0).mean())
+                v = pd.to_numeric(active_df[sigma_power_cols[0]], errors="coerce").to_numpy(dtype=float)
+                v = v[np.isfinite(v)]
+                cv_power = float(np.nanmean(v)) if v.size else None
                 ripple_power = cv_power
             else:
                 cv_power = self._safe_cv(active_df[p_col].fillna(0.0))
@@ -166,6 +181,7 @@ class PlasmaStabilityService:
                     "ripple_power": ripple_power,
                     "active_rate": active_rate,
                     "sample_count": sample_count,
+                    "n_active_samples": sample_count,
                 }
             )
 
@@ -187,19 +203,23 @@ class PlasmaStabilityService:
         uniformity_cv_current = float(agg_fn(uni_cur_vals)) if uni_cur_vals else 0.0
         uniformity_cv_power = float(agg_fn(uni_pwr_vals)) if uni_pwr_vals else 0.0
 
+        def _agg_metric(name: str) -> float:
+            vals = [float(x[name]) for x in per_cathode if x.get(name) is not None and np.isfinite(float(x[name]))]
+            return float(agg_fn(vals)) if vals else 0.0
+
         score = (
-            req.weights.get("cv_power", 1.0) * float(agg_fn([r["cv_power"] for r in per_cathode]) if per_cathode else 0.0)
-            + req.weights.get("cv_current", 1.0) * float(agg_fn([r["cv_current"] for r in per_cathode]) if per_cathode else 0.0)
-            + req.weights.get("ripple_power", 0.5) * float(agg_fn([r["ripple_power"] for r in per_cathode]) if per_cathode else 0.0)
-            + req.weights.get("ripple_current", 0.5) * float(agg_fn([r["ripple_current"] for r in per_cathode]) if per_cathode else 0.0)
-            + req.weights.get("vacuum_cv", 0.5) * vacuum_cv
+            req.weights.get("cv_power", 1.0) * _agg_metric("cv_power")
+            + req.weights.get("cv_current", 1.0) * _agg_metric("cv_current")
+            + req.weights.get("ripple_power", 0.5) * _agg_metric("ripple_power")
+            + req.weights.get("ripple_current", 0.5) * _agg_metric("ripple_current")
+            + req.weights.get("vacuum_cv", 0.5) * float(vacuum_cv or 0.0)
             + req.weights.get("uniformity_cv_power", 0.7) * uniformity_cv_power
             + req.weights.get("uniformity_cv_current", 0.7) * uniformity_cv_current
         )
 
         summary = {
             "overall_stability_score": float(score),
-            "vacuum_cv": float(vacuum_cv),
+            "vacuum_cv": float(vacuum_cv) if vacuum_cv is not None else None,
             "uniformity_cv_current": float(uniformity_cv_current),
             "uniformity_cv_power": float(uniformity_cv_power),
             "active_cathodes_count": float(sum(1 for r in per_cathode if r["active_rate"] > 0)),
@@ -265,10 +285,10 @@ class PlasmaStabilityService:
             per_cathode.append(
                 {
                     "cathode_id": str(cathode),
-                    "cv_current": float(agg_fn(g["cv_current"])),
-                    "cv_power": float(agg_fn(g["cv_power"])),
-                    "ripple_current": float(agg_fn(g["ripple_current"])),
-                    "ripple_power": float(agg_fn(g["ripple_power"])),
+                    "cv_current": float(np.nanmean(g["cv_current"])) if len(g) else None,
+                    "cv_power": float(np.nanmean(g["cv_power"])) if len(g) else None,
+                    "ripple_current": float(np.nanmean(g["ripple_current"])) if len(g) else None,
+                    "ripple_power": float(np.nanmean(g["ripple_power"])) if len(g) else None,
                     "active_rate": float(g["active"].mean()) if "active" in g else 1.0,
                     "sample_count": int(len(g)),
                 }
@@ -290,22 +310,28 @@ class PlasmaStabilityService:
 
         vacuum_cv = self._safe_cv(work[vacuum_col].fillna(0.0)) if vacuum_col else 0.0
         agg_fn = np.mean if req.agg == "mean" else np.median
-        uniformity_cv_current = float(agg_fn([x["cv_current"] for x in per_cathode])) if per_cathode else 0.0
-        uniformity_cv_power = float(agg_fn([x["cv_power"] for x in per_cathode])) if per_cathode else 0.0
+        vals_cur = [float(x["cv_current"]) for x in per_cathode if x.get("cv_current") is not None]
+        vals_pwr = [float(x["cv_power"]) for x in per_cathode if x.get("cv_power") is not None]
+        uniformity_cv_current = float(agg_fn(vals_cur)) if vals_cur else 0.0
+        uniformity_cv_power = float(agg_fn(vals_pwr)) if vals_pwr else 0.0
+
+        def _agg_metric(name: str) -> float:
+            vals = [float(x[name]) for x in per_cathode if x.get(name) is not None]
+            return float(agg_fn(vals)) if vals else 0.0
 
         score = (
-            req.weights.get("cv_power", 1.0) * float(agg_fn([r["cv_power"] for r in per_cathode]) if per_cathode else 0.0)
-            + req.weights.get("cv_current", 1.0) * float(agg_fn([r["cv_current"] for r in per_cathode]) if per_cathode else 0.0)
-            + req.weights.get("ripple_power", 0.5) * float(agg_fn([r["ripple_power"] for r in per_cathode]) if per_cathode else 0.0)
-            + req.weights.get("ripple_current", 0.5) * float(agg_fn([r["ripple_current"] for r in per_cathode]) if per_cathode else 0.0)
-            + req.weights.get("vacuum_cv", 0.5) * vacuum_cv
+            req.weights.get("cv_power", 1.0) * _agg_metric("cv_power")
+            + req.weights.get("cv_current", 1.0) * _agg_metric("cv_current")
+            + req.weights.get("ripple_power", 0.5) * _agg_metric("ripple_power")
+            + req.weights.get("ripple_current", 0.5) * _agg_metric("ripple_current")
+            + req.weights.get("vacuum_cv", 0.5) * float(vacuum_cv or 0.0)
             + req.weights.get("uniformity_cv_power", 0.7) * uniformity_cv_power
             + req.weights.get("uniformity_cv_current", 0.7) * uniformity_cv_current
         )
 
         summary = {
             "overall_stability_score": float(score),
-            "vacuum_cv": float(vacuum_cv),
+            "vacuum_cv": float(vacuum_cv) if vacuum_cv is not None else None,
             "uniformity_cv_current": float(uniformity_cv_current),
             "uniformity_cv_power": float(uniformity_cv_power),
             "active_cathodes_count": float(sum(1 for r in per_cathode if r["active_rate"] > 0)),
@@ -340,7 +366,7 @@ class PlasmaStabilityService:
             raise ValueError("No plasma stability result available. Run analysis first.")
 
         if fmt == "json":
-            return "application/json", json.dumps([self.last_result.summary, *self.last_result.per_cathode], indent=2)
+            return "application/json", json.dumps(sanitize_jsonable([self.last_result.summary, *self.last_result.per_cathode]), indent=2)
 
         if fmt == "csv":
             df = pd.DataFrame(self.last_result.per_cathode)

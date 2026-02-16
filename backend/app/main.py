@@ -3,6 +3,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.routes import router
 
@@ -24,6 +25,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+
+
+@app.middleware("http")
+async def json_guard_middleware(request, call_next):
+    try:
+        return await call_next(request)
+    except ValueError as exc:
+        if "Out of range float values" in str(exc) or "not JSON compliant" in str(exc):
+            return JSONResponse(status_code=500, content={"detail":"Non-JSON-compliant float (NaN/Inf) in response. Fixed by sanitization."})
+        raise
 
 
 @app.get("/health")

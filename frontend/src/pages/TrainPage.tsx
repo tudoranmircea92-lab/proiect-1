@@ -32,6 +32,7 @@ export function TrainPage() {
     } catch (e:any) { setError(e.message || 'Train failed') } finally { setLoading(false) }
   }
 
+  const fmt = (v: any) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(4))
   const targetRows = useMemo(()=> result ? Object.entries(result.metrics_per_target).map(([k,v]:any)=>({target:k, mae:v.mae, rmse:v.rmse})) : [], [result])
   const grouped = useMemo(()=>{
     const d: any = { RG_mean:[], RG_std:[], RF_mean:[], RF_std:[], T_mean:[], T_std:[] }
@@ -71,9 +72,9 @@ export function TrainPage() {
 
     {result && <>
       <div className='grid md:grid-cols-3 gap-3'>
-        <Card><p className='text-sm font-medium'>mean MAE (means)</p><p className='text-2xl font-semibold'>{result.aggregate_metrics.mean_mae_means.toFixed(4)}</p></Card>
-        <Card><p className='text-sm font-medium'>mean MAE (stds)</p><p className='text-2xl font-semibold'>{result.aggregate_metrics.mean_mae_stds.toFixed(4)}</p></Card>
-        <Card><p className='text-sm font-medium'>overall score</p><p className='text-2xl font-semibold'>{(result.aggregate_metrics.mean_mae_means + result.aggregate_metrics.mean_mae_stds).toFixed(4)}</p></Card>
+        <Card><p className='text-sm font-medium'>mean MAE (means)</p><p className='text-2xl font-semibold'>{fmt(result.aggregate_metrics.mean_mae_means)}</p></Card>
+        <Card><p className='text-sm font-medium'>mean MAE (stds)</p><p className='text-2xl font-semibold'>{fmt(result.aggregate_metrics.mean_mae_stds)}</p></Card>
+        <Card><p className='text-sm font-medium'>overall score</p><p className='text-2xl font-semibold'>{fmt((result.aggregate_metrics.mean_mae_means ?? 0) + (result.aggregate_metrics.mean_mae_stds ?? 0))}</p></Card>
       </div>
 
       <Card className='h-72'>
@@ -83,7 +84,7 @@ export function TrainPage() {
       </Card>
 
       <Card className='overflow-auto'>
-        <table className='min-w-full text-sm'><thead><tr className='border-b'><th className='text-left p-2'>Target</th><th className='text-left p-2'>MAE</th><th className='text-left p-2'>RMSE</th></tr></thead><tbody>{targetRows.map((r:any)=><tr key={r.target} className='border-b'><td className='p-2'>{r.target}</td><td className='p-2'>{r.mae.toFixed(4)}</td><td className='p-2'>{r.rmse.toFixed(4)}</td></tr>)}</tbody></table>
+        <table className='min-w-full text-sm'><thead><tr className='border-b'><th className='text-left p-2'>Target</th><th className='text-left p-2'>MAE</th><th className='text-left p-2'>RMSE</th></tr></thead><tbody>{targetRows.map((r:any)=><tr key={r.target} className='border-b'><td className='p-2'>{r.target}</td><td className='p-2'>{fmt(r.mae)}</td><td className='p-2'>{fmt(r.rmse)}</td></tr>)}</tbody></table>
       </Card>
 
       <Card><Button variant='secondary' onClick={()=>window.open(`http://localhost:8000/api/artifacts/${result.artifact_id}/download`)}><Download size={16} className='inline mr-1'/>Download artifacts</Button></Card>

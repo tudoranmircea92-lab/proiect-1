@@ -22,6 +22,7 @@ from app.services.job_service import JobService
 from app.services.optimization_service import OptimizationService
 from app.services.plasma_stability_service import PlasmaStabilityService
 from app.services.training_service import TrainingService
+from app.services.json_sanitize import count_non_finite, sanitize_jsonable
 
 logger = logging.getLogger("app.api")
 router = APIRouter(prefix="/api")
@@ -47,7 +48,7 @@ def _job(data_func, stages: list[tuple[int, str]]):
 @router.get('/jobs/{job_id}')
 def get_job(job_id: str):
     try:
-        return jobs.get(job_id)
+        return sanitize_jsonable(jobs.get(job_id))
     except KeyError:
         raise HTTPException(status_code=404, detail='Job not found')
 
@@ -58,10 +59,14 @@ def data_load(payload: LoadDataRequest):
 
     def work():
         dataset_id, _ = repo.load(payload.path, payload.format)
-        return repo.profile(dataset_id)
+        payload = repo.profile(dataset_id)
+        bad = count_non_finite(payload)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('data/load non-finite count=%s', bad)
+        return sanitize_jsonable(payload)
 
     jobs.run_async(job_id, lambda: _job(work, [(10, 'Preparing load'), (35, 'Reading file'), (60, 'Profiling columns'), (85, 'Building preview'), (100, 'Done')])(job_id))
-    return {'job_id': job_id}
+    return sanitize_jsonable({'job_id': job_id})
 
 
 @router.post('/data/upload')
@@ -81,15 +86,20 @@ async def data_upload(file: UploadFile = File(...), format: str = Form('auto')):
         dataset_id, _ = repo.register_uploaded(str(save_path), fmt)
         prof = repo.profile(dataset_id)
         ext_fmt = 'parquet' if save_path.suffix.lower() in {'.parquet', '.pq'} else 'csv'
-        return {'dataset_id': dataset_id, 'saved_path': str(save_path), 'format': ext_fmt, 'profile': prof}
+        payload = {'dataset_id': dataset_id, 'saved_path': str(save_path), 'format': ext_fmt, 'profile': prof}
+        bad = count_non_finite(payload)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('data/upload non-finite count=%s', bad)
+        return sanitize_jsonable(payload)
 
     jobs.run_async(job_id, lambda: _job(work, [(10, 'Uploading'), (35, 'Reading file'), (60, 'Profiling columns'), (85, 'Building preview'), (100, 'Done')])(job_id))
-    return {'job_id': job_id}
+    return sanitize_jsonable({'job_id': job_id})
 
 
 @router.get('/models')
 def models_available():
-    return {'models': trainer.available_models()}
+    payload = {'models': trainer.available_models()}
+    return sanitize_jsonable(payload)
 
 
 @router.post('/train')
@@ -98,10 +108,10 @@ def train(payload: TrainRequest):
 
     def work():
         result = trainer.train(repo.get(payload.dataset_id), payload.config)
-        return result
+        return sanitize_jsonable(result)
 
     jobs.run_async(job_id, lambda: _job(work, [(10, 'Preparing dataset'), (30, 'Building feature matrix'), (55, 'Training model'), (80, 'Evaluating'), (95, 'Saving artifacts'), (100, 'Done')])(job_id))
-    return {'job_id': job_id}
+    return sanitize_jsonable({'job_id': job_id})
 
 
 @router.post('/predict')
@@ -110,10 +120,10 @@ def predict(payload: PredictRequest):
 
     def work():
         _ = repo.get(payload.dataset_id)
-        return {'predictions': trainer.predict(payload.control_knobs, payload.context)}
+        return sanitize_jsonable({'predictions': trainer.predict(payload.control_knobs, payload.context)})
 
     jobs.run_async(job_id, lambda: _job(work, [(15, 'Preparing input'), (55, 'Running model'), (100, 'Done')])(job_id))
-    return {'job_id': job_id}
+    return sanitize_jsonable({'job_id': job_id})
 
 
 @router.post('/optimize')
@@ -121,10 +131,10 @@ def optimize(payload: OptimizeRequest):
     job_id = jobs.create()
 
     def work():
-        return {'solutions': optimizer.optimize(repo.get(payload.dataset_id), payload), 'method': payload.method}
+        return sanitize_jsonable({'solutions': optimizer.optimize(repo.get(payload.dataset_id), payload), 'method': payload.method})
 
     jobs.run_async(job_id, lambda: _job(work, [(15, 'Preparing search'), (40, 'Running candidates'), (75, 'Scoring solutions'), (95, 'Building report'), (100, 'Done')])(job_id))
-    return {'job_id': job_id}
+    return sanitize_jsonable({'job_id': job_id})
 
 
 @router.post('/plasma_stability')
@@ -134,10 +144,14 @@ def plasma_stability(payload: PlasmaStabilityRequest):
     def work():
         df = repo.get(payload.dataset_id) if payload.dataset_id else repo.get()
         result = plasma.compute(payload, df)
-        return {'summary': result.summary, 'per_cathode': result.per_cathode, 'timeseries': result.timeseries, 'mode_used': result.mode_used}
+        payload_out = {'summary': result.summary, 'per_cathode': result.per_cathode, 'timeseries': result.timeseries, 'mode_used': result.mode_used}
+        bad = count_non_finite(payload_out)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('plasma_stability non-finite count=%s', bad)
+        return sanitize_jsonable(payload_out)
 
     jobs.run_async(job_id, lambda: _job(work, [(15, 'Preparing analysis'), (45, 'Computing metrics'), (80, 'Aggregating KPIs'), (100, 'Done')])(job_id))
-    return {'job_id': job_id}
+    return sanitize_jsonable({'job_id': job_id})
 
 
 @router.get('/plasma_stability/export')
@@ -167,13 +181,13 @@ def seed_plates(dataset_id: str, limit: int = 200):
     rows = []
     for _, row in df[display_cols + control_cols + context_cols].head(limit).iterrows():
         rows.append({'meta': {k: row.get(k, None) for k in display_cols}, 'control_knobs': {k: row.get(k, None) for k in control_cols}, 'context': {k: row.get(k, None) for k in context_cols}})
-    return {'rows': rows}
+    return sanitize_jsonable({'rows': rows})
 
 
 @router.get('/config/feature-regex')
 def feature_regex_config():
     path = Path('backend/app/configs/feature_config.json')
-    return json.loads(path.read_text(encoding='utf-8'))
+    return sanitize_jsonable(json.loads(path.read_text(encoding='utf-8')))
 
 
 @router.get('/artifacts/{artifact_id}/download')

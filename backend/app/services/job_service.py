@@ -6,6 +6,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from app.services.json_sanitize import sanitize_jsonable
+
 
 @dataclass
 class JobState:
@@ -54,7 +56,7 @@ class JobService:
                 "status": j.status,
                 "progress": j.progress,
                 "stage": j.stage,
-                "result": j.result,
+                "result": sanitize_jsonable(j.result),
                 "error": j.error,
                 "updated_at": j.updated_at,
             }
@@ -64,7 +66,7 @@ class JobService:
             try:
                 self.update(job_id, status="running")
                 result = func()
-                self.update(job_id, status="done", progress=100, stage="Done", result=result)
+                self.update(job_id, status="done", progress=100, stage="Done", result=sanitize_jsonable(result))
             except Exception as exc:
                 self.update(job_id, status="error", error=str(exc), stage="Failed")
 

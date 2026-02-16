@@ -4,6 +4,7 @@ import os
 import uuid
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from app.utils.feature_selector import detect_groups
@@ -63,7 +64,9 @@ class DataRepository:
         grouped = detect_groups(df, include_debug=self.debug_enabled)
         knob_debug = grouped.pop("knob_debug", {})
         missing_summary = {col: int(df[col].isna().sum()) for col in df.columns}
-        safe_preview = df.head(20).copy().where(pd.notna(df.head(20)), None)
+        preview_df = df.head(20).copy()
+        preview_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+        safe_preview = preview_df.where(pd.notna(preview_df), None)
 
         out = {
             "dataset_id": dataset_id,
