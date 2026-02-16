@@ -19,6 +19,7 @@ Din UI poți:
 - alege tipul de merge (`inner`/`left`/`outer`)
 - activa scanare recursivă
 - filtra pe an (ex. `2025`, util pentru structuri `2025/02/02/...`)
+- vezi progress bar + status live (scanare / parsing / merge / save)
 
 ## CLI (fără UI)
 ```bash

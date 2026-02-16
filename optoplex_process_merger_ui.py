@@ -6,9 +6,9 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, W, Button, Checkbutton, Entry, Frame, IntVar, Label, StringVar, Tk, filedialog, messagebox
+from tkinter import BOTH, END, LEFT, RIGHT, W, Button, Checkbutton, DoubleVar, Entry, Frame, IntVar, Label, StringVar, Tk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
-from tkinter.ttk import Combobox
+from tkinter.ttk import Combobox, Progressbar
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -376,21 +376,28 @@ def find_files(root: Path, pattern: str, recursive: bool, year: Optional[str]) -
     return sorted([p for p in iterator if p.is_file() and _matches_year(p, year)])
 
 
-def load_color_dataset(files: List[Path], log) -> pd.DataFrame:
+def load_color_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
-    for fp in files:
+    total = max(len(files), 1)
+    for idx, fp in enumerate(files, start=1):
         raw_lines = fp.read_text(encoding="utf-8", errors="ignore").splitlines(True)
         file_ts, product, thickness_mm = extract_metadata(raw_lines)
         if not file_ts or not product:
+            if progress:
+                progress(progress_base + progress_span * idx / total, f"Color parsing {idx}/{len(files)}")
             continue
         meas = extract_measurements_optoplex(raw_lines)
         if not meas:
+            if progress:
+                progress(progress_base + progress_span * idx / total, f"Color parsing {idx}/{len(files)}")
             continue
 
         dfm = pd.DataFrame([m.__dict__ for m in meas])
         dfm = dfm.groupby(["plate", "device", "position_mm"], as_index=False)[["L", "a", "b"]].mean()
         for plate, dplate in dfm.groupby("plate", as_index=False):
             rows.append(build_color_row(file_ts.date(), file_ts, int(plate), product, thickness_mm, dplate))
+        if progress:
+            progress(progress_base + progress_span * idx / total, f"Color parsing {idx}/{len(files)}")
 
     if not rows:
         raise RuntimeError("Nu s-au putut extrage date color (Optoplex).")
@@ -401,13 +408,18 @@ def load_color_dataset(files: List[Path], log) -> pd.DataFrame:
     return out
 
 
-def load_process_dataset(files: List[Path], log) -> pd.DataFrame:
+def load_process_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0) -> pd.DataFrame:
     longs: List[pd.DataFrame] = []
-    for fp in files:
+    total = max(len(files), 1)
+    for idx, fp in enumerate(files, start=1):
         raw = pd.read_csv(fp, sep=";", engine="c", low_memory=False)
         if not {"Location", "glassId", "optoplexGTime"}.issubset(raw.columns):
+            if progress:
+                progress(progress_base + progress_span * idx / total, f"Process parsing {idx}/{len(files)}")
             continue
         longs.append(_prepare_long(raw))
+        if progress:
+            progress(progress_base + progress_span * idx / total, f"Process parsing {idx}/{len(files)}")
 
     if not longs:
         raise RuntimeError("Nu s-au putut extrage date process (glassFile).")
@@ -424,14 +436,20 @@ def load_process_dataset(files: List[Path], log) -> pd.DataFrame:
     return wide
 
 
-def run_merge(cfg: MergeConfig, log) -> Path:
+def run_merge(cfg: MergeConfig, log, progress=None) -> Path:
+    if progress:
+        progress(0.01, "Scanning files")
     color_files = find_files(cfg.optoplex_dir, "*.csv", cfg.recursive, cfg.year_filter)
     proc_files = find_files(cfg.process_dir, "*_glassFile.csv", cfg.recursive, cfg.year_filter)
     log(f"Optoplex files: {len(color_files)}")
     log(f"Glass/process files: {len(proc_files)}")
+    if progress:
+        progress(0.08, "Files scanned")
 
-    color_df = load_color_dataset(color_files, log)
-    proc_df = load_process_dataset(proc_files, log)
+    color_df = load_color_dataset(color_files, log, progress=progress, progress_base=0.08, progress_span=0.42)
+    proc_df = load_process_dataset(proc_files, log, progress=progress, progress_base=0.50, progress_span=0.40)
+    if progress:
+        progress(0.92, "Merging datasets")
 
     merged = color_df.merge(proc_df, on=["day", "plate"], how=cfg.merge_how, suffixes=("", "_process"))
     merged = merged.sort_values(["day", "plate"]).reset_index(drop=True)
@@ -450,6 +468,8 @@ def run_merge(cfg: MergeConfig, log) -> Path:
         merged.to_csv(out, index=False)
 
     log(f"[OK] Saved: {out}")
+    if progress:
+        progress(1.0, "Done")
     return out
 
 
@@ -470,6 +490,9 @@ class MergerApp:
         self.comp_var = StringVar(value="snappy")
         self.merge_var = StringVar(value="inner")
         self.recursive_var = IntVar(value=1)
+        self.progress_var = DoubleVar(value=0.0)
+        self.status_var = StringVar(value="Ready")
+        self.run_btn: Optional[Button] = None
 
         self._build_form()
 
@@ -505,7 +528,13 @@ class MergerApp:
         Label(row2, text="Merge type", width=10, anchor=W).pack(side=LEFT, padx=(16, 0))
         Combobox(row2, textvariable=self.merge_var, values=["inner", "left", "outer"], width=10, state="readonly").pack(side=LEFT, padx=6)
 
-        Button(top, text="Run merge", command=self._start_run).pack(anchor=W, padx=8, pady=8)
+        self.run_btn = Button(top, text="Run merge", command=self._start_run)
+        self.run_btn.pack(anchor=W, padx=8, pady=8)
+
+        pframe = Frame(top)
+        pframe.pack(fill=BOTH, padx=8, pady=4)
+        Progressbar(pframe, variable=self.progress_var, maximum=100.0).pack(side=LEFT, fill=BOTH, expand=True)
+        Label(pframe, textvariable=self.status_var, width=28, anchor=W).pack(side=LEFT, padx=8)
 
         self.log_box = ScrolledText(self.root, height=22)
         self.log_box.pack(fill=BOTH, expand=True, padx=10, pady=8)
@@ -530,6 +559,16 @@ class MergerApp:
         self.log_box.see(END)
         self.root.update_idletasks()
 
+    def _set_progress(self, ratio: float, status: str):
+        pct = max(0.0, min(100.0, ratio * 100.0))
+        self.progress_var.set(pct)
+        self.status_var.set(f"{status} ({pct:.1f}%)")
+        self.root.update_idletasks()
+
+    def _set_running(self, running: bool):
+        if self.run_btn:
+            self.run_btn.config(state="disabled" if running else "normal")
+
     def _start_run(self):
         cfg = MergeConfig(
             optoplex_dir=Path(self.opt_dir.get().strip()),
@@ -546,13 +585,21 @@ class MergerApp:
             messagebox.showerror("Invalid input", "Completează folderele de input și fișierul de output.")
             return
 
+        self._set_running(True)
+        self._set_progress(0.0, "Starting")
+
+        def ui_progress(ratio: float, status: str):
+            self.root.after(0, lambda: self._set_progress(ratio, status))
+
         def worker():
             try:
-                out = run_merge(cfg, self._log)
-                messagebox.showinfo("Done", f"Merge finalizat.\n{out}")
+                out = run_merge(cfg, self._log, progress=ui_progress)
+                self.root.after(0, lambda: messagebox.showinfo("Done", f"Merge finalizat.\n{out}"))
             except Exception as e:
-                self._log(f"[ERROR] {e}")
-                messagebox.showerror("Error", str(e))
+                self.root.after(0, lambda: self._log(f"[ERROR] {e}"))
+                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+            finally:
+                self.root.after(0, lambda: self._set_running(False))
 
         threading.Thread(target=worker, daemon=True).start()
 
