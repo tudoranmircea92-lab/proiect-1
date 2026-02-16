@@ -1,80 +1,92 @@
-import { useEffect, useState } from 'react'
+import { Download, Play } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Card, Input, Select, Switch, Button, Progress, Skeleton, Alert } from '../components/ui'
 import { api } from '../lib/api'
 import { useDataset } from '../lib/datasetContext'
+import { runJob } from '../lib/jobs'
 
 export function TrainPage() {
+  const { datasetId, setModelTrained } = useDataset()
   const [models, setModels] = useState<string[]>([])
   const [modelType, setModelType] = useState('hist_gradient_boosting')
   const [split, setSplit] = useState<'time'|'random'>('time')
   const [ratio, setRatio] = useState(0.8)
   const [seed, setSeed] = useState(42)
-  const [toggles, setToggles] = useState({
-    include_power: true,
-    include_main_gas: true,
-    include_main_gas_alt: true,
-    include_segment_gas: true,
-    include_context_numeric: true,
-    include_context_categorical: true,
-    include_context_keyword_allowlist: true,
-  })
+  const [toggles, setToggles] = useState({ include_power:true, include_main_gas:true, include_main_gas_alt:true, include_segment_gas:true, include_context_numeric:true, include_context_categorical:true, include_context_keyword_allowlist:true })
   const [result, setResult] = useState<any>(null)
-  const [toast, setToast] = useState('')
-  const { datasetId } = useDataset()
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [stage, setStage] = useState('')
 
   useEffect(() => { api.get('/api/models').then(r => setModels(r.data.models)) }, [])
 
   const train = async () => {
     if (!datasetId) { setError('Load data first'); return }
-    setError(''); setToast('')
+    setLoading(true); setError('')
     try {
-      const res = await api.post('/api/train', { dataset_id: datasetId, config: { model_type: modelType, split: { method: split, ratio, random_seed: seed }, features: toggles } })
-      setResult(res.data); setToast('Training completed successfully')
-    } catch (e:any) {
-      setError(e?.response?.data?.detail ?? 'Train failed')
-    }
+      const res = await runJob('/api/train', { dataset_id: datasetId, config: { model_type: modelType, split: { method: split, ratio, random_seed: seed }, features: toggles } }, ({progress, stage})=>{setProgress(progress); setStage(stage)})
+      setResult(res)
+      setModelTrained(true)
+    } catch (e:any) { setError(e.message || 'Train failed') } finally { setLoading(false) }
   }
 
-  const chartData = result ? Object.entries(result.metrics_per_target).map(([t, m]: any) => ({ target: t, mae: m.mae })) : []
+  const targetRows = useMemo(()=> result ? Object.entries(result.metrics_per_target).map(([k,v]:any)=>({target:k, mae:v.mae, rmse:v.rmse})) : [], [result])
+  const grouped = useMemo(()=>{
+    const d: any = { RG_mean:[], RG_std:[], RF_mean:[], RF_std:[], T_mean:[], T_std:[] }
+    targetRows.forEach((r:any)=>{ const p=r.target.split('_'); d[`${p[1]}_${p[2]}`].push(r.mae) })
+    return Object.entries(d).map(([k,v]:any)=>({ group:k, mae:v.length? v.reduce((a:number,b:number)=>a+b,0)/v.length:0 }))
+  }, [targetRows])
 
-  return <div className='space-y-4'>
-    {!datasetId && <section className='card text-slate-600'>Load data first from the Data tab.</section>}
-    <section className='card space-y-3'>
-      <h2 className='text-lg font-semibold'>Train</h2>
-      <div className='grid md:grid-cols-4 gap-3'>
-        <select className='input' value={modelType} onChange={e=>setModelType(e.target.value)}>{models.map(m=><option key={m}>{m}</option>)}</select>
-        <select className='input' value={split} onChange={e=>setSplit(e.target.value as any)}><option value='time'>Time split</option><option value='random'>Random split</option></select>
-        <input className='input' type='number' step='0.05' min='0.5' max='0.95' value={ratio} onChange={e=>setRatio(Number(e.target.value))}/>
-        <input className='input' type='number' value={seed} onChange={e=>setSeed(Number(e.target.value))}/>
-      </div>
-      <div className='grid md:grid-cols-4 gap-2 text-sm'>
-        {Object.entries(toggles).map(([k,v])=><label key={k} className='flex gap-2 items-center'><input type='checkbox' checked={v} onChange={e=>setToggles({...toggles,[k]:e.target.checked})}/>{k}</label>)}
-      </div>
-      <button className='btn' onClick={train} disabled={!datasetId}>Train Model</button>
-      {toast && <p className='text-emerald-600 text-sm'>{toast}</p>}
-      {error && <p className='text-red-600 text-sm'>{error}</p>}
-    </section>
+  return <div className='space-y-6'>
+    {!datasetId && <Alert variant='destructive'>Load data first.</Alert>}
+
+    <div className='grid md:grid-cols-2 gap-6'>
+      <Card className='space-y-3'>
+        <h3 className='text-sm font-medium tracking-tight'>Model</h3>
+        <div className='grid gap-3'>
+          <div><label className='text-sm'>Model type</label><Select value={modelType} onChange={(e:any)=>setModelType(e.target.value)}>{models.map(m=><option key={m}>{m}</option>)}</Select></div>
+          <div><label className='text-sm'>Split</label><Select value={split} onChange={(e:any)=>setSplit(e.target.value)}><option value='time'>time</option><option value='random'>random</option></Select></div>
+          <div><label className='text-sm'>Split ratio: {ratio.toFixed(2)}</label><Input type='range' min='0.5' max='0.95' step='0.01' value={ratio} onChange={(e:any)=>setRatio(Number(e.target.value))}/></div>
+          <div><label className='text-sm'>Random seed</label><Input type='number' value={seed} onChange={(e:any)=>setSeed(Number(e.target.value))}/></div>
+        </div>
+      </Card>
+
+      <Card className='space-y-3'>
+        <h3 className='text-sm font-medium tracking-tight'>Features</h3>
+        {Object.entries(toggles).map(([k,v])=>
+          <div key={k} className='flex items-center justify-between text-sm'><span>{k}</span><Switch checked={v as boolean} onCheckedChange={(nv:boolean)=>setToggles({...toggles,[k]:nv})}/></div>
+        )}
+      </Card>
+    </div>
+
+    <Card className='space-y-3'>
+      {loading && <><Progress value={progress}/><p className='text-sm text-slate-500'>{stage}</p></>}
+      {error && <Alert variant='destructive'>{error}</Alert>}
+      <Button onClick={train} disabled={!datasetId || loading}><Play size={16} className='inline mr-1'/>Train model</Button>
+    </Card>
+
+    {loading && <div className='grid md:grid-cols-3 gap-3'>{[1,2,3].map(i=><Skeleton key={i} className='h-24' />)}</div>}
 
     {result && <>
-      <section className='card grid md:grid-cols-4 gap-3'>
-        <div><p className='label'>Mean MAE (means)</p><p className='text-xl font-semibold'>{result.aggregate_metrics.mean_mae_means.toFixed(4)}</p></div>
-        <div><p className='label'>Mean MAE (stds)</p><p className='text-xl font-semibold'>{result.aggregate_metrics.mean_mae_stds.toFixed(4)}</p></div>
-        <div><p className='label'>Dropped rows (missing Y)</p><p className='text-xl font-semibold'>{result.dropped_rows_missing_targets}</p></div>
-        <div><p className='label'>Total features</p><p className='text-xl font-semibold'>{result.selected_feature_counts.total}</p></div>
-      </section>
-      <section className='card'>
-        <p className='text-sm'>Controls: {result.feature_schema.control_knobs.length} | Context numeric: {result.feature_schema.context_numeric.length} | Context categorical: {result.feature_schema.context_categorical.length}</p>
-        <p className='text-xs text-slate-600 mt-1'>Keyword forced: {(result.feature_schema.keyword_forced_context || []).join(', ') || 'None'}</p>
-      </section>
-      <section className='card h-80'>
+      <div className='grid md:grid-cols-3 gap-3'>
+        <Card><p className='text-sm font-medium'>mean MAE (means)</p><p className='text-2xl font-semibold'>{result.aggregate_metrics.mean_mae_means.toFixed(4)}</p></Card>
+        <Card><p className='text-sm font-medium'>mean MAE (stds)</p><p className='text-2xl font-semibold'>{result.aggregate_metrics.mean_mae_stds.toFixed(4)}</p></Card>
+        <Card><p className='text-sm font-medium'>overall score</p><p className='text-2xl font-semibold'>{(result.aggregate_metrics.mean_mae_means + result.aggregate_metrics.mean_mae_stds).toFixed(4)}</p></Card>
+      </div>
+
+      <Card className='h-72'>
         <ResponsiveContainer width='100%' height='100%'>
-          <BarChart data={chartData}><CartesianGrid strokeDasharray='3 3' /><XAxis dataKey='target' interval={0} angle={-45} textAnchor='end' height={100}/><YAxis/><Tooltip/><Bar dataKey='mae' fill='#2563eb'/></BarChart>
+          <BarChart data={grouped}><CartesianGrid strokeDasharray='3 3'/><XAxis dataKey='group'/><YAxis/><Tooltip/><Bar dataKey='mae' fill='#2563eb'/></BarChart>
         </ResponsiveContainer>
-      </section>
-      <section className='card'>
-        <a className='btn-secondary' href={`http://localhost:8000/api/artifacts/${result.artifact_id}/download`}>Download Artifacts</a>
-      </section>
+      </Card>
+
+      <Card className='overflow-auto'>
+        <table className='min-w-full text-sm'><thead><tr className='border-b'><th className='text-left p-2'>Target</th><th className='text-left p-2'>MAE</th><th className='text-left p-2'>RMSE</th></tr></thead><tbody>{targetRows.map((r:any)=><tr key={r.target} className='border-b'><td className='p-2'>{r.target}</td><td className='p-2'>{r.mae.toFixed(4)}</td><td className='p-2'>{r.rmse.toFixed(4)}</td></tr>)}</tbody></table>
+      </Card>
+
+      <Card><Button variant='secondary' onClick={()=>window.open(`http://localhost:8000/api/artifacts/${result.artifact_id}/download`)}><Download size={16} className='inline mr-1'/>Download artifacts</Button></Card>
     </>}
   </div>
 }

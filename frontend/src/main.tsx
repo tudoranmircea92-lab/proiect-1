@@ -1,36 +1,40 @@
-import React from 'react'
+import React, { useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom'
 import './index.css'
 import { DataPage } from './pages/DataPage'
 import { TrainPage } from './pages/TrainPage'
 import { PredictPage } from './pages/PredictPage'
 import { OptimizePage } from './pages/OptimizePage'
 import { PlasmaStabilityPage } from './pages/PlasmaStabilityPage'
-import { DatasetProvider } from './lib/datasetContext'
+import { DatasetProvider, useDataset } from './lib/datasetContext'
+import { Badge, Card, Tabs } from './components/ui'
 
-function Shell() {
+function AppShell() {
+  const [tab, setTab] = useState('Data')
+  const { datasetId, datasetSummary, modelTrained } = useDataset() as any
+
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-6">
-      <header className="card flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-semibold">Glass Coater ML Platform</h1>
-          <p className="text-sm text-slate-500">Production workflow for color prediction, optimization, and plasma stability</p>
-        </div>
-        <nav className="flex gap-2 flex-wrap">
-          {['data', 'train', 'predict', 'optimize', 'plasma-stability'].map((p) => (
-            <Link key={p} className="btn-secondary capitalize" to={`/${p}`}>{p}</Link>
-          ))}
-        </nav>
+    <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <header className='space-y-3'>
+        <h1 className="text-2xl font-semibold">Glass Coater ML Platform</h1>
+        <Card className='py-3'>
+          <div className='flex flex-wrap items-center gap-3 text-sm'>
+            <span>Dataset:</span>
+            <Badge className={datasetId ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}>{datasetId ? 'Loaded' : 'Not loaded'}</Badge>
+            <span>Rows/Cols: {datasetSummary ? `${datasetSummary.rows}/${datasetSummary.columns}` : '-'}</span>
+            <span>Model:</span>
+            <Badge className={modelTrained ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}>{modelTrained ? 'Trained' : 'Not trained'}</Badge>
+          </div>
+        </Card>
       </header>
-      <Routes>
-        <Route path="/data" element={<DataPage />} />
-        <Route path="/train" element={<TrainPage />} />
-        <Route path="/predict" element={<PredictPage />} />
-        <Route path="/optimize" element={<OptimizePage />} />
-        <Route path="/plasma-stability" element={<PlasmaStabilityPage />} />
-        <Route path="*" element={<Navigate to="/data" />} />
-      </Routes>
+
+      <Tabs tabs={['Data', 'Train', 'Predict', 'Optimize', 'Plasma Stability']} active={tab} setActive={setTab} />
+
+      {tab === 'Data' && <DataPage />}
+      {tab === 'Train' && <TrainPage />}
+      {tab === 'Predict' && <PredictPage />}
+      {tab === 'Optimize' && <OptimizePage />}
+      {tab === 'Plasma Stability' && <PlasmaStabilityPage />}
     </div>
   )
 }
@@ -38,9 +42,7 @@ function Shell() {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <DatasetProvider>
-      <BrowserRouter>
-        <Shell />
-      </BrowserRouter>
+      <AppShell />
     </DatasetProvider>
   </React.StrictMode>,
 )
