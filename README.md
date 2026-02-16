@@ -25,6 +25,21 @@ npm install
 npm run dev
 ```
 
+## Quick Start (Windows)
+
+Use the root script:
+
+```bat
+run_all.bat
+```
+
+This script:
+1. Creates `backend\.venv` if missing.
+2. Installs backend requirements.
+3. Installs frontend dependencies.
+4. Starts backend and frontend in separate terminals.
+5. Prints URLs for both services.
+
 ## Design enforced
 
 - Targets are fixed to 18 outputs for RG/RF/T and L/a/b mean/std (ABS excluded).
@@ -33,6 +48,12 @@ npm run dev
   - **Context numeric + categorical** (included in training/prediction, read-only for optimizer).
 - Optimizer uses a freeze mask: only control knobs are decision variables.
 
+## Plasma Stability tab
+
+- New analysis tab computes plasma stability KPIs per cathode with date/time filtering.
+- Supports both true timeseries mode and plate-level wide fallback proxies.
+- KPI cards, cathode bar chart, trend line chart (if timeseries), heatmap-style table, and CSV/JSON export.
+
 ## API endpoints
 
 - `POST /api/data/load` `{path, format}`
@@ -40,6 +61,8 @@ npm run dev
 - `POST /api/train` `{config}`
 - `POST /api/predict` `{control_knobs, context}`
 - `POST /api/optimize` `{targets, constraints, method, bounds, params, seed_control_knobs, seed_context}`
+- `POST /api/plasma_stability` `{path_or_dataset_id, mode, date_from, date_to, ...}`
+- `GET /api/plasma_stability/export?format=csv|json`
 - `GET /api/artifacts/{id}/download`
 
 ## Artifacts

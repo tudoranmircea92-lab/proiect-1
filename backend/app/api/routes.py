@@ -5,14 +5,16 @@ import json
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.models.schemas import (
     DataLoadResponse,
     LoadDataRequest,
     OptimizeRequest,
     OptimizeResponse,
+    PlasmaStabilityRequest,
+    PlasmaStabilityResponse,
     PredictRequest,
     PredictResponse,
     TrainRequest,
@@ -20,12 +22,14 @@ from app.models.schemas import (
 )
 from app.services.data_repository import DataRepository
 from app.services.optimization_service import OptimizationService
+from app.services.plasma_stability_service import PlasmaStabilityService
 from app.services.training_service import TrainingService
 
 router = APIRouter(prefix="/api")
 repo = DataRepository()
 trainer = TrainingService()
 optimizer = OptimizationService(trainer)
+plasma = PlasmaStabilityService()
 
 
 @router.post("/data/load", response_model=DataLoadResponse)
@@ -82,6 +86,29 @@ def optimize(payload: OptimizeRequest):
     try:
         solutions = optimizer.optimize(repo.get(), payload)
         return {"solutions": solutions, "method": payload.method}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/plasma_stability", response_model=PlasmaStabilityResponse)
+def plasma_stability(payload: PlasmaStabilityRequest):
+    try:
+        result = plasma.compute(payload, repo.get())
+        return {
+            "summary": result.summary,
+            "per_cathode": result.per_cathode,
+            "timeseries": result.timeseries,
+            "mode_used": result.mode_used,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/plasma_stability/export")
+def plasma_stability_export(format: str = Query("csv", pattern="^(csv|json)$")):
+    try:
+        media_type, content = plasma.export_last(format)
+        return PlainTextResponse(content=content, media_type=media_type)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

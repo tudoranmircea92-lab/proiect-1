@@ -6,6 +6,7 @@ import { DataPage } from './pages/DataPage'
 import { TrainPage } from './pages/TrainPage'
 import { PredictPage } from './pages/PredictPage'
 import { OptimizePage } from './pages/OptimizePage'
+import { PlasmaStabilityPage } from './pages/PlasmaStabilityPage'
 
 function Shell() {
   return (
@@ -13,10 +14,10 @@ function Shell() {
       <header className="card flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-semibold">Glass Coater ML Platform</h1>
-          <p className="text-sm text-slate-500">Production workflow for color prediction and optimization</p>
+          <p className="text-sm text-slate-500">Production workflow for color prediction, optimization, and plasma stability</p>
         </div>
-        <nav className="flex gap-2">
-          {['data', 'train', 'predict', 'optimize'].map((p) => (
+        <nav className="flex gap-2 flex-wrap">
+          {['data', 'train', 'predict', 'optimize', 'plasma-stability'].map((p) => (
             <Link key={p} className="btn-secondary capitalize" to={`/${p}`}>{p}</Link>
           ))}
         </nav>
@@ -26,6 +27,7 @@ function Shell() {
         <Route path="/train" element={<TrainPage />} />
         <Route path="/predict" element={<PredictPage />} />
         <Route path="/optimize" element={<OptimizePage />} />
+        <Route path="/plasma-stability" element={<PlasmaStabilityPage />} />
         <Route path="*" element={<Navigate to="/data" />} />
       </Routes>
     </div>

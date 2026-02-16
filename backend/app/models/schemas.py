@@ -108,6 +108,36 @@ class OptimizeResponse(BaseModel):
     method: str
 
 
+class PlasmaStabilityRequest(BaseModel):
+    path_or_dataset_id: str | None = None
+    mode: Literal["auto", "timeseries", "wide_auto"] = "auto"
+    date_from: str
+    date_to: str
+    time_from: str | None = None
+    time_to: str | None = None
+    active_threshold: float = 0.0
+    metrics: list[str] = Field(default_factory=lambda: ["cv_power", "cv_current", "vacuum_cv", "uniformity_cv_power", "uniformity_cv_current"])
+    rolling_window_sec: int = 30
+    agg: Literal["mean", "median"] = "mean"
+    weights: dict[str, float] = Field(default_factory=lambda: {
+        "cv_power": 1.0,
+        "cv_current": 1.0,
+        "ripple_power": 0.5,
+        "ripple_current": 0.5,
+        "vacuum_cv": 0.5,
+        "uniformity_cv_power": 0.7,
+        "uniformity_cv_current": 0.7,
+    })
+    show_inactive: bool = False
+
+
+class PlasmaStabilityResponse(BaseModel):
+    summary: dict[str, float]
+    per_cathode: list[dict[str, Any]]
+    timeseries: dict[str, list[dict[str, Any]]]
+    mode_used: str
+
+
 class DataLoadResponse(BaseModel):
     rows: int
     columns: int
