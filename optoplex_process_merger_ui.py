@@ -729,10 +729,18 @@ class MergerApp:
             self.run_btn.config(state="disabled" if running else "normal")
 
     def _start_run(self):
+        opt_dir_raw = self.opt_dir.get().strip()
+        proc_dir_raw = self.proc_dir.get().strip()
+        out_path_raw = self.out_path.get().strip()
+
+        if not opt_dir_raw or not proc_dir_raw or not out_path_raw:
+            messagebox.showerror("Invalid input", "Completează folderele de input și fișierul de output.")
+            return
+
         cfg = MergeConfig(
-            optoplex_dir=Path(self.opt_dir.get().strip()),
-            process_dir=Path(self.proc_dir.get().strip()),
-            output_path=Path(self.out_path.get().strip()),
+            optoplex_dir=Path(opt_dir_raw),
+            process_dir=Path(proc_dir_raw),
+            output_path=Path(out_path_raw),
             output_format=self.format_var.get(),
             recursive=bool(self.recursive_var.get()),
             year_filter=self.year_filter.get().strip() or None,
@@ -740,8 +748,8 @@ class MergerApp:
             merge_how=self.merge_var.get(),
         )
 
-        if not cfg.optoplex_dir.exists() or not cfg.process_dir.exists() or not cfg.output_path:
-            messagebox.showerror("Invalid input", "Completează folderele de input și fișierul de output.")
+        if not cfg.optoplex_dir.exists() or not cfg.process_dir.exists() or cfg.output_path.is_dir():
+            messagebox.showerror("Invalid input", "Verifică folderele de input și fișierul de output.")
             return
 
         self._set_running(True)
