@@ -1,5 +1,5 @@
 import { Download, Play } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Accordion, Alert, Badge, Button, Card, Input, Progress, Select, Skeleton } from '../components/ui'
 import { api } from '../lib/api'
@@ -32,9 +32,28 @@ export function PlasmaStabilityPage() {
   const [sort, setSort] = useState<'cathode' | 'metric_desc'>('metric_desc')
   const [selectedCathode, setSelectedCathode] = useState('')
   const [errorObj, setErrorObj] = useState<any>(null)
+  const [plasmaReady, setPlasmaReady] = useState(true)
+  const [healthMsg, setHealthMsg] = useState('')
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [stage, setStage] = useState('')
+
+
+  useEffect(() => {
+    let mounted = true
+    api.get('/api/plasma/health').then(() => {
+      if (!mounted) return
+      setPlasmaReady(true)
+      setHealthMsg('')
+    }).catch((e: any) => {
+      if (!mounted) return
+      setPlasmaReady(false)
+      const status = e?.response?.status
+      const detail = e?.response?.data?.detail
+      setHealthMsg(`Plasma backend not available. Check that /api/plasma is mounted. ${status ? `(status ${status})` : ''} ${detail ? `- ${JSON.stringify(detail)}` : ''}`)
+    })
+    return () => { mounted = false }
+  }, [datasetId])
 
   const run = async () => {
     if (!datasetId) {
@@ -63,8 +82,18 @@ export function PlasmaStabilityPage() {
       setJobId(jobId)
       setResult(result)
     } catch (e: any) {
-      const detail = e?.response?.data?.detail || e?.message || 'Unknown error'
-      setErrorObj(typeof detail === 'object' ? detail : { detail })
+      const status = e?.response?.status ?? null
+      const url = `${e?.config?.baseURL || ''}${e?.config?.url || '/api/plasma/stability'}`
+      const response = e?.response?.data ?? null
+      const detail = (typeof response?.detail === 'string' ? response.detail : e?.message) || 'Unknown error'
+      setErrorObj({
+        detail,
+        hint: response?.hint,
+        action: response?.action,
+        status,
+        url,
+        response,
+      })
     } finally {
       setLoading(false)
     }
@@ -99,8 +128,12 @@ export function PlasmaStabilityPage() {
       a.download = 'plasma_stability.csv'
       a.click()
     } catch (e: any) {
-      const detail = e?.response?.data?.detail || e?.message || 'Export failed'
-      setErrorObj(typeof detail === 'object' ? detail : { detail })
+      setErrorObj({
+        detail: 'Export failed',
+        status: e?.response?.status ?? null,
+        url: `${e?.config?.baseURL || ''}${e?.config?.url || '/api/plasma/export_csv'}`,
+        response: e?.response?.data ?? e?.message,
+      })
     }
   }
 
@@ -114,8 +147,10 @@ export function PlasmaStabilityPage() {
         <div><label className='text-xs text-slate-600'>To</label><Input type='datetime-local' value={toTs} onChange={(e: any) => setToTs(e.target.value)} /></div>
         <div><label className='text-xs text-slate-600'>Active threshold</label><Select value={String(threshold)} onChange={(e: any) => setThreshold(Number(e.target.value))}><option value='0'>0.0</option><option value='0.1'>0.1</option><option value='1'>1.0</option></Select></div>
         <div><label className='text-xs text-slate-600'>Aggregation</label><Select value={agg} onChange={(e: any) => setAgg(e.target.value)}><option value='mean'>mean</option><option value='median'>median</option></Select></div>
-        <div className='flex gap-2'><Button onClick={run} disabled={!datasetId || loading}><Play size={16} className='inline mr-1' />Run</Button><Button variant='secondary' onClick={exportCsv} disabled={!result}><Download size={16} className='inline mr-1' />Export CSV</Button></div>
+        <div className='flex gap-2'><Button onClick={run} disabled={!datasetId || loading || !plasmaReady}><Play size={16} className='inline mr-1' />Run</Button><Button variant='secondary' onClick={exportCsv} disabled={!result}><Download size={16} className='inline mr-1' />Export CSV</Button></div>
       </div>
+
+      {!plasmaReady && <Alert variant='destructive'>{healthMsg}</Alert>}
 
       <Accordion title='How this score is computed'>
         <div className='grid md:grid-cols-2 gap-3 text-sm'>
@@ -149,7 +184,11 @@ export function PlasmaStabilityPage() {
         {errorObj.hint && <p className='text-xs mt-1'>Hint: {errorObj.hint}</p>}
         {errorObj.action && <Button className='mt-2' variant='secondary'>{errorObj.action}</Button>}
         <Accordion title='Show details'>
-          <pre className='text-xs overflow-auto'>{JSON.stringify(errorObj, null, 2)}</pre>
+          <div className='text-xs space-y-1'>
+            <p>Status: {errorObj.status ?? '—'}</p>
+            <p>URL: {errorObj.url ?? '—'}</p>
+            <pre className='overflow-auto'>{JSON.stringify(errorObj.response ?? errorObj, null, 2)}</pre>
+          </div>
         </Accordion>
       </Alert>}
     </Card>

@@ -217,6 +217,21 @@ def optimize(payload: OptimizeRequest):
     return sanitize_jsonable({'job_id': job_id})
 
 
+@router.get('/plasma/health')
+@router.get('/plasma/health/')
+def plasma_health():
+    return sanitize_jsonable({
+        'ok': True,
+        'version': '1.0.0',
+        'routes': [
+            'GET /api/plasma/health',
+            'GET /api/plasma/columns',
+            'POST /api/plasma/stability',
+            'GET /api/plasma/export_csv?job_id=...',
+        ],
+    })
+
+
 @router.get('/plasma/columns')
 @router.get('/plasma/columns/')
 def plasma_columns(dataset_id: str):
@@ -232,8 +247,15 @@ def plasma_columns(dataset_id: str):
 @router.post('/plasma/stability')
 @router.post('/plasma/stability/')
 def plasma_stability(payload: PlasmaStabilityRequest):
+    missing = []
     if not payload.dataset_id:
-        raise HTTPException(status_code=400, detail={"detail": "Missing dataset_id", "hint": "Select a loaded dataset", "action": "Go to Data → Load + Profile"})
+        missing.append('dataset_id')
+    if not payload.from_ts:
+        missing.append('from')
+    if not payload.to_ts:
+        missing.append('to')
+    if missing:
+        raise HTTPException(status_code=400, detail={"detail": f"Missing {','.join(missing)}", "hint": "Provide dataset_id, from, and to before running", "action": "Fill required fields and retry"})
 
     try:
         _ = repo.get(payload.dataset_id)
