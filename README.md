@@ -32,3 +32,13 @@ python optoplex_process_merger_ui.py \
   --merge-how inner \
   --year 2025
 ```
+
+## Process pipeline (minimal, ML-ready)
+```bash
+python process_pipeline_glassfile_to_parquet.py \
+  --input /data/glass \
+  --output /data/out/process.parquet \
+  --keep-material-only \
+  --include-seg-gas \
+  --include-material-gas
+```

@@ -1,0 +1,297 @@
+from __future__ import annotations
+
+import argparse
+import re
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
+
+import pandas as pd
+
+
+_COMP_RE = re.compile(r"(\d+)")
+
+
+def _norm_material(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s or s.lower() in {"nan", "none", "null"}:
+        return None
+    return s.upper()
+
+
+def _extract_compartment(location: object) -> Optional[int]:
+    if location is None:
+        return None
+    m = _COMP_RE.search(str(location))
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+
+def _parse_optoplex_time_to_day(series: pd.Series) -> pd.Series:
+    s = (
+        series.astype(str)
+        .str.replace(r"\D+", "", regex=True)
+        .str.slice(0, 14)
+    )
+    dt = pd.to_datetime(s, format="%Y%m%d%H%M%S", errors="coerce")
+    return dt.dt.strftime("%Y-%m-%d")
+
+
+def _read_glass_csv(fp: Path) -> Optional[pd.DataFrame]:
+    try:
+        try:
+            return pd.read_csv(
+                fp,
+                sep=";",
+                engine="python",
+                on_bad_lines="skip",
+                encoding="utf-8",
+                encoding_errors="ignore",
+            )
+        except TypeError:
+            return pd.read_csv(
+                fp,
+                sep=";",
+                engine="python",
+                on_bad_lines="skip",
+                encoding="utf-8",
+            )
+    except Exception:
+        return None
+
+
+def _build_file_plate_frame(
+    raw: pd.DataFrame,
+    keep_material_only: bool,
+    include_seg_gas: bool,
+    include_material_gas: bool,
+) -> Tuple[Optional[pd.DataFrame], Set[int]]:
+    required = {"glassId", "optoplexGTime", "Location"}
+    if not required.issubset(raw.columns):
+        return None, set()
+
+    working = pd.DataFrame(
+        {
+            "day": _parse_optoplex_time_to_day(raw["optoplexGTime"]),
+            "plate": pd.to_numeric(raw["glassId"], errors="coerce").astype("Int64"),
+            "comp": raw["Location"].map(_extract_compartment).astype("Int64"),
+        }
+    )
+
+    if "actFreq" in raw.columns:
+        working["actFreq"] = pd.to_numeric(raw["actFreq"], errors="coerce")
+    if "actVacuumPressure" in raw.columns:
+        working["actVacuumPressure"] = pd.to_numeric(raw["actVacuumPressure"], errors="coerce")
+    if "nomProcessSpeed_mm" in raw.columns:
+        working["nomProcessSpeed_mm"] = pd.to_numeric(raw["nomProcessSpeed_mm"], errors="coerce")
+    elif "nomProcessSpeed" in raw.columns:
+        working["nomProcessSpeed_mm"] = pd.to_numeric(raw["nomProcessSpeed"], errors="coerce")
+
+    if "actTargetMaterial1" in raw.columns:
+        working["actTargetMaterial1"] = raw["actTargetMaterial1"].map(_norm_material)
+    else:
+        working["actTargetMaterial1"] = None
+
+    if "actTargetMaterial2" in raw.columns:
+        working["actTargetMaterial2"] = raw["actTargetMaterial2"].map(_norm_material)
+    else:
+        working["actTargetMaterial2"] = None
+
+    if "actTarget1KWH" in raw.columns:
+        working["actTarget1KWH"] = pd.to_numeric(raw["actTarget1KWH"], errors="coerce")
+    if "actTarget2KWH" in raw.columns:
+        working["actTarget2KWH"] = pd.to_numeric(raw["actTarget2KWH"], errors="coerce")
+
+    if "actPower" in raw.columns:
+        working["actPower"] = pd.to_numeric(raw["actPower"], errors="coerce")
+    if "actVoltageUMF" in raw.columns:
+        working["actVoltageUMF"] = pd.to_numeric(raw["actVoltageUMF"], errors="coerce")
+    if "actCurrentIMF" in raw.columns:
+        working["actCurrentIMF"] = pd.to_numeric(raw["actCurrentIMF"], errors="coerce")
+
+    if include_seg_gas:
+        for i in range(1, 12):
+            src = f"actSegGas{i}Flow"
+            if src in raw.columns:
+                working[src] = pd.to_numeric(raw[src], errors="coerce")
+
+    if include_material_gas:
+        for src in ["Ar_flow", "N2_flow", "O2_flow"]:
+            if src in raw.columns:
+                working[src] = pd.to_numeric(raw[src], errors="coerce")
+
+    working = working.dropna(subset=["day", "plate", "comp"]).copy()
+    if working.empty:
+        return None, set()
+
+    keys = ["day", "plate"]
+    globals_cols = [c for c in ["actFreq", "actVacuumPressure", "nomProcessSpeed_mm"] if c in working.columns]
+    if not globals_cols:
+        plate_global = working[keys].drop_duplicates().copy()
+    else:
+        agg_globals = {c: "mean" for c in globals_cols}
+        plate_global = working.groupby(keys, as_index=False).agg(agg_globals)
+
+    # Detect relevant compartments by material presence
+    if keep_material_only:
+        mat1_non_empty = working["actTargetMaterial1"].notna()
+        mat2_non_empty = working["actTargetMaterial2"].notna()
+        rel = working.loc[mat1_non_empty | mat2_non_empty, "comp"].dropna().astype(int)
+        relevant_comps = set(rel.tolist())
+    else:
+        relevant_comps = set(working["comp"].dropna().astype(int).tolist())
+
+    comp_frames: List[pd.DataFrame] = []
+
+    for comp in sorted(relevant_comps):
+        dcomp = working[working["comp"] == comp]
+        if dcomp.empty:
+            continue
+
+        feature_map: Dict[str, str] = {}
+
+        if "actPower" in dcomp.columns:
+            feature_map["actPower"] = f"c{comp}.pwr"
+        if "actVoltageUMF" in dcomp.columns:
+            feature_map["actVoltageUMF"] = f"c{comp}.voltage"
+        if "actCurrentIMF" in dcomp.columns:
+            feature_map["actCurrentIMF"] = f"c{comp}.current"
+
+        if include_seg_gas:
+            for i in range(1, 12):
+                src = f"actSegGas{i}Flow"
+                if src in dcomp.columns:
+                    feature_map[src] = f"c{comp}.s{i}g"
+
+        if include_material_gas:
+            gas_map = {"Ar_flow": "m1g", "N2_flow": "m2g", "O2_flow": "m3g"}
+            for src, target in gas_map.items():
+                if src in dcomp.columns:
+                    feature_map[src] = f"c{comp}.{target}"
+
+        feature_map["actTargetMaterial1"] = f"c{comp}.mat1"
+        if "actTarget1KWH" in dcomp.columns:
+            feature_map["actTarget1KWH"] = f"c{comp}.kwh1"
+        if "actTargetMaterial2" in dcomp.columns:
+            feature_map["actTargetMaterial2"] = f"c{comp}.mat2"
+        if "actTarget2KWH" in dcomp.columns:
+            feature_map["actTarget2KWH"] = f"c{comp}.kwh2"
+
+        use_cols = [c for c in feature_map if c in dcomp.columns]
+        if not use_cols:
+            continue
+
+        agg: Dict[str, str] = {}
+        for c in use_cols:
+            if c in {"actTargetMaterial1", "actTargetMaterial2"}:
+                agg[c] = "first"
+            else:
+                agg[c] = "mean"
+
+        comp_agg = dcomp.groupby(keys, as_index=False).agg(agg)
+        comp_agg = comp_agg.rename(columns=feature_map)
+        comp_frames.append(comp_agg)
+
+    base = plate_global.set_index(keys)
+    pieces = [base]
+    for cf in comp_frames:
+        pieces.append(cf.set_index(keys))
+
+    final = pd.concat(pieces, axis=1).reset_index()
+    return final, relevant_comps
+
+
+def build_process_parquet(
+    input_dir: Path,
+    output_file: Path,
+    keep_material_only: bool,
+    include_seg_gas: bool,
+    include_material_gas: bool,
+) -> None:
+    files = sorted(input_dir.rglob("*_glassFile.csv"))
+    if not files:
+        raise SystemExit(f"No *_glassFile.csv files found under: {input_dir}")
+
+    read_ok = 0
+    skipped_bad = 0
+    detected_relevant: Set[int] = set()
+    parts: List[pd.DataFrame] = []
+
+    for fp in files:
+        raw = _read_glass_csv(fp)
+        if raw is None:
+            skipped_bad += 1
+            continue
+
+        out_df, relevant = _build_file_plate_frame(
+            raw=raw,
+            keep_material_only=keep_material_only,
+            include_seg_gas=include_seg_gas,
+            include_material_gas=include_material_gas,
+        )
+        if out_df is None or out_df.empty:
+            skipped_bad += 1
+            continue
+
+        read_ok += 1
+        detected_relevant.update(relevant)
+        parts.append(out_df)
+
+    if not parts:
+        raise SystemExit("No valid process rows produced. All files were skipped or empty.")
+
+    merged = pd.concat(parts, ignore_index=True, sort=False)
+    merged = merged.sort_values(["day", "plate"]).groupby(["day", "plate"], as_index=False).first()
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_parquet(output_file, index=False)
+
+    print(f"files ok / skipped: {read_ok} / {skipped_bad}")
+    print(f"relevant compartments detected: {len(detected_relevant)}")
+    print(f"final shape: {merged.shape}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Fast, robust, ML-ready process parquet generator from *glassFile.csv (minimal columns)."
+    )
+    parser.add_argument("--input", required=True, help="Input folder (recursive scan for *_glassFile.csv)")
+    parser.add_argument("--output", required=True, help="Output process.parquet path")
+
+    parser.add_argument(
+        "--keep-material-only",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Keep only relevant compartments based on actTargetMaterial1/2 presence (default: true).",
+    )
+    parser.add_argument(
+        "--include-seg-gas",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Include segment gas c{comp}.s1g..s11g if available (default: true).",
+    )
+    parser.add_argument(
+        "--include-material-gas",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Include material gas c{comp}.m1g..m3g from Ar_flow/N2_flow/O2_flow if available (default: true).",
+    )
+
+    args = parser.parse_args()
+
+    build_process_parquet(
+        input_dir=Path(args.input),
+        output_file=Path(args.output),
+        keep_material_only=bool(args.keep_material_only),
+        include_seg_gas=bool(args.include_seg_gas),
+        include_material_gas=bool(args.include_material_gas),
+    )
+
+
+if __name__ == "__main__":
+    main()
