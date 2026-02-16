@@ -40,7 +40,7 @@ async def json_guard_middleware(request, call_next):
         return await call_next(request)
     except ValueError as exc:
         if "Out of range float values" in str(exc) or "not JSON compliant" in str(exc):
-            return JSONResponse(status_code=500, content={"detail":"Non-JSON-compliant float (NaN/Inf) in response. Fixed by sanitization."})
+            return JSONResponse(status_code=500, content={"detail": "Non-JSON-compliant float (NaN/Inf) in response. Fixed by sanitization."})
         raise
 
 
