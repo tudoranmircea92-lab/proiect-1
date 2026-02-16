@@ -15,9 +15,13 @@ def _norm_material(value: object) -> Optional[str]:
     if value is None:
         return None
     s = str(value).strip()
-    if not s or s.lower() in {"nan", "none", "null"}:
+    if not s:
         return None
-    return s.upper()
+    su = s.upper()
+    empty_tokens = {"NAN", "NONE", "NULL", "N/A", "NA", "-", "--", "---", "0", "0.0", "EMPTY"}
+    if su in empty_tokens:
+        return None
+    return su
 
 
 def _extract_compartment(location: object) -> Optional[int]:

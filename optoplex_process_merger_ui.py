@@ -296,9 +296,15 @@ def _norm_target(value: object) -> Optional[str]:
     if value is None:
         return None
     s = str(value).strip()
-    if not s or s.lower() in {"nan", "none", "null"}:
+    if not s:
         return None
-    return s.upper()
+
+    su = s.upper()
+    # treat placeholders / non-material markers as empty
+    empty_tokens = {"NAN", "NONE", "NULL", "N/A", "NA", "-", "--", "---", "0", "0.0", "EMPTY"}
+    if su in empty_tokens:
+        return None
+    return su
 
 
 def _prepare_long(df: pd.DataFrame) -> pd.DataFrame:
@@ -437,10 +443,6 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
 
     out = global_df.merge(wide, on=["ts", "plate"], how="left")
 
-    # hard-drop any leaked gigantic legacy columns if present
-    drop_prefixes = (
-        "c1.gas", "c1.seg", "c1.frontBackRatio", "c1.segMaxOverMean",
-    )
     # generic filter: keep only allowed c{comp}.<minimal>
     allowed_suffix = set(["pwr", "voltage", "current", "m1g", "m2g", "m3g", "acttar1", "kwh1", "acttar2", "kwh2"] + [f"s{i}g" for i in range(1, 12)])
     keep_cols = []
