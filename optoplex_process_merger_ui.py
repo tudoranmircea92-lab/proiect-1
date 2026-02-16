@@ -302,9 +302,19 @@ def _prepare_long(df: pd.DataFrame) -> pd.DataFrame:
         }
     )
 
+    # globals per plate (single columns after aggregation, NOT per compartment)
+    if "glassThickness" in df.columns:
+        base["glassThickness_mm"] = _safe_float32(df["glassThickness"])
+    if "nomProcessSpeed_mm" in df.columns:
+        base["nomProcessSpeed_mm"] = _safe_float32(df["nomProcessSpeed_mm"])
+    elif "nomProcessSpeed" in df.columns:
+        base["nomProcessSpeed_mm"] = _safe_float32(df["nomProcessSpeed"])
+    if "actProcessSpeed_mm" in df.columns:
+        base["actProcessSpeed_mm"] = _safe_float32(df["actProcessSpeed_mm"])
+    elif "actProcessSpeed" in df.columns:
+        base["actProcessSpeed_mm"] = _safe_float32(df["actProcessSpeed"])
+
     optional_fields = [
-        "glassThickness",
-        "nomProcessSpeed_mm",
         "actVacuumPressure",
         "actFreq",
         "actPower",
@@ -353,10 +363,29 @@ def _prepare_long(df: pd.DataFrame) -> pd.DataFrame:
 def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     d = long_df.dropna(subset=["ts", "plate", "comp"]).copy()
     d["comp"] = d["comp"].astype(int)
-    value_cols = [c for c in d.columns if c not in ["ts", "plate", "comp"]]
-    wide = d.set_index(["ts", "plate", "comp"])[value_cols].unstack("comp")
-    wide.columns = [f"c{comp}.{feat}" for feat, comp in wide.columns]
-    return wide.reset_index().copy()
+
+    # Keep one global column for thickness/speeds (instead of c1..c70 variants)
+    global_cols = [
+        c
+        for c in ["glassThickness_mm", "nomProcessSpeed_mm", "actProcessSpeed_mm"]
+        if c in d.columns
+    ]
+
+    if global_cols:
+        global_df = d.groupby(["ts", "plate"], as_index=False)[global_cols].mean()
+    else:
+        global_df = d[["ts", "plate"]].drop_duplicates().copy()
+
+    value_cols = [c for c in d.columns if c not in ["ts", "plate", "comp", *global_cols]]
+    if value_cols:
+        wide = d.set_index(["ts", "plate", "comp"])[value_cols].unstack("comp")
+        wide.columns = [f"c{comp}.{feat}" for feat, comp in wide.columns]
+        wide = wide.reset_index().copy()
+        out = global_df.merge(wide, on=["ts", "plate"], how="left")
+    else:
+        out = global_df.copy()
+
+    return out
 
 
 # ===========

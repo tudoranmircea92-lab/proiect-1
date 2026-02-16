@@ -42,3 +42,5 @@ python process_pipeline_glassfile_to_parquet.py \
   --include-seg-gas \
   --include-material-gas
 ```
+
+Notă: în merge-ul final, grosimea și viteza de proces sunt păstrate ca **o singură coloană globală** (`glassThickness_mm`, `nomProcessSpeed_mm`, `actProcessSpeed_mm`), nu pe fiecare compartiment/catod.
