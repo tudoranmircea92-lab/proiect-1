@@ -22,6 +22,7 @@ class PlasmaComputationResult:
     kpis: dict[str, float | None]
     per_cathode: list[dict[str, Any]]
     trends: dict[str, list[Any]]
+    data_notes: dict[str, Any]
 
 
 class PlasmaStabilityService:
@@ -226,6 +227,20 @@ class PlasmaStabilityService:
             "avg_active_cathodes": avg_active,
         }
 
+
+    @staticmethod
+    def _gas_missing_count(df: pd.DataFrame, detected: dict[str, dict[str, Any]]) -> int:
+        missing = 0
+        for cath, info in detected.items():
+            for seg in info.get("segments", []):
+                col = f"{cath}.s{seg}g"
+                if col not in df.columns:
+                    continue
+                vals = pd.to_numeric(df[col], errors="coerce")
+                if not vals.notna().any():
+                    missing += 1
+        return missing
+
     def _compute_trends(self, df: pd.DataFrame, ts_col: str | None, req: PlasmaStabilityRequest, detected: dict[str, dict[str, Any]]) -> dict[str, list[Any]]:
         if ts_col is None:
             per = self._compute_per_cathode(df, detected, req)
@@ -284,7 +299,14 @@ class PlasmaStabilityService:
             "rows_used": int(len(df)),
         }
 
-        result = PlasmaComputationResult(interval=interval, kpis=kpis, per_cathode=per_cathode, trends=trends)
+        data_notes = {
+            "rows_used": int(len(df)),
+            "avg_active_cathodes": kpis.get("avg_active_cathodes"),
+            "gas_segments_missing": self._gas_missing_count(df, detected),
+            "computation_mode": "across_plates_wide_dataset",
+        }
+
+        result = PlasmaComputationResult(interval=interval, kpis=kpis, per_cathode=per_cathode, trends=trends, data_notes=data_notes)
         self.last_result = result
         return result
 
@@ -300,6 +322,7 @@ class PlasmaStabilityService:
                         "kpis": self.last_result.kpis,
                         "per_cathode": self.last_result.per_cathode,
                         "trends": self.last_result.trends,
+                        "data_notes": self.last_result.data_notes,
                     }
                 ),
                 indent=2,

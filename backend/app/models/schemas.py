@@ -162,6 +162,7 @@ class PlasmaStabilityResponse(BaseModel):
     kpis: dict[str, float | None]
     per_cathode: list[dict[str, Any]]
     trends: dict[str, list[Any]]
+    data_notes: dict[str, Any] | None = None
 
 
 class DataLoadResponse(BaseModel):
