@@ -379,16 +379,8 @@ def _prepare_long(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
-    d = long_df.dropna(subset=["ts", "plate", "comp"]).copy()
-    d["comp"] = d["comp"].astype(int)
-
-    # Relevant compartments only: those having acttar1 or acttar2 at least once
-    if "acttar1" in d.columns or "acttar2" in d.columns:
-        m1 = d["acttar1"].notna() if "acttar1" in d.columns else pd.Series(False, index=d.index)
-        m2 = d["acttar2"].notna() if "acttar2" in d.columns else pd.Series(False, index=d.index)
-        relevant = set(d.loc[m1 | m2, "comp"].astype(int).tolist())
-        if relevant:
-            d = d[d["comp"].isin(relevant)].copy()
+    d_all = long_df.dropna(subset=["ts", "plate", "comp"]).copy()
+    d_all["comp"] = d_all["comp"].astype(int)
 
     # Global columns: one column each, not per compartment
     global_cols = [
@@ -400,13 +392,27 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
             "actVacuumPressure",
             "actFreq",
         ]
-        if c in d.columns
+        if c in d_all.columns
     ]
 
     if global_cols:
-        global_df = d.groupby(["ts", "plate"], as_index=False)[global_cols].mean()
+        global_df = d_all.groupby(["ts", "plate"], as_index=False)[global_cols].mean()
     else:
-        global_df = d[["ts", "plate"]].drop_duplicates().copy()
+        global_df = d_all[["ts", "plate"]].drop_duplicates().copy()
+
+    # Relevant compartments ONLY: with real acttar1/acttar2
+    d = d_all
+    relevant = set()
+    if "acttar1" in d_all.columns or "acttar2" in d_all.columns:
+        m1 = d_all["acttar1"].notna() if "acttar1" in d_all.columns else pd.Series(False, index=d_all.index)
+        m2 = d_all["acttar2"].notna() if "acttar2" in d_all.columns else pd.Series(False, index=d_all.index)
+        relevant = set(d_all.loc[m1 | m2, "comp"].astype(int).tolist())
+
+    # if no relevant compartments => keep only global columns
+    if not relevant:
+        return global_df.copy()
+
+    d = d_all[d_all["comp"].isin(relevant)].copy()
 
     # Build per-comp values (minimal set)
     keep_candidates = ["pwr", "voltage", "current"] + [f"s{i}g" for i in range(1, 12)] + ["m1g", "m2g", "m3g", "acttar1", "kwh1", "acttar2", "kwh2"]
@@ -431,7 +437,7 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     per_comp = d.groupby(["ts", "plate", "comp"], as_index=False).agg(agg)
 
     # remove acttar2/kwh2 rows for comps without real target2
-    if comps_with_tar2 and "acttar2" in per_comp.columns:
+    if "acttar2" in per_comp.columns:
         mask_tar2_comp = per_comp["comp"].isin(comps_with_tar2)
         per_comp.loc[~mask_tar2_comp, "acttar2"] = pd.NA
         if "kwh2" in per_comp.columns:
