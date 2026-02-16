@@ -76,3 +76,34 @@ Each train run saves:
 ## Sample config template
 
 - `backend/app/configs/feature_config.json`
+
+
+## Runbook (Windows + Conda)
+
+### Backend (PowerShell + conda)
+```powershell
+conda create -n glassml python=3.10 -y
+conda activate glassml
+pip install -r backend/requirements.txt
+uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### Frontend (PowerShell/cmd)
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+### Smoke checks
+```powershell
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/plasma/health
+```
+
+### Tests
+```powershell
+pytest -q backend/tests
+python -m py_compile (rg --files backend | rg '\.py$')
+cd frontend; npm run build
+```

@@ -130,7 +130,7 @@ class OptimizeStage(BaseModel):
 
 
 class OptimizeStrategy(BaseModel):
-    gas_coupling: Literal["segmented_only", "main_plus_scale_segmented"] = "segmented_only"
+    gas_coupling: Literal["segmented_only", "main_plus_scale_segmented", "segmented_le_main", "segmented_eq_main"] = "segmented_only"
     stages: list[OptimizeStage] = Field(default_factory=lambda: [
         OptimizeStage(name="segmented_gases", enabled=True),
         OptimizeStage(name="cathode_power", enabled=True),
@@ -145,7 +145,18 @@ class RobustnessConfig(BaseModel):
 
 
 class GuardrailsConfig(BaseModel):
+    max_step_pct: float | None = Field(default=None, ge=0, le=100)
     max_total_change: float | None = None
+    on_only_cathodes: bool = True
+
+
+class MeasurementConfig(BaseModel):
+    source: Literal["last_plate", "median_n", "stable_window"] = "last_plate"
+    median_n: int = Field(default=5, ge=1, le=50)
+    stable_window_n: int = Field(default=5, ge=2, le=100)
+    settle_mode: Literal["immediate", "after_settle"] = "immediate"
+    ignore_outliers: bool = False
+    prediction_interval: bool = False
 
 class OptimizeRequest(BaseModel):
     dataset_id: str
@@ -175,6 +186,7 @@ class OptimizeRequest(BaseModel):
     strategy: OptimizeStrategy = OptimizeStrategy()
     robustness: RobustnessConfig = RobustnessConfig()
     guardrails: GuardrailsConfig = GuardrailsConfig()
+    measurement: MeasurementConfig = MeasurementConfig()
 
 
 class Solution(BaseModel):
@@ -236,6 +248,7 @@ class DataUploadResponse(BaseModel):
 
 
 class TrainResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     model_id: str
     artifact_id: str
     train_rows: int

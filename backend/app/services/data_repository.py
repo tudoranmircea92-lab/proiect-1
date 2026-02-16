@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import uuid
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pandas as pd
 from app.models.schemas import DataFilter
 from app.utils.feature_selector import detect_groups
 
+logger = logging.getLogger("app.data_repository")
 
 PRODUCT_CANDIDATES = ["product", "product_name", "productCode", "recipe", "part"]
 THICKNESS_CANDIDATES = ["thickness", "glassThickness", "nominal_thickness"]
@@ -260,6 +262,19 @@ class DataRepository:
                         item['limits'] = {'min': 0.0, 'max': 0.0}
 
         cathode_list = sorted(cathodes.values(), key=lambda x: int(x['id'][1:]) if x['id'][1:].isdigit() else 10**9)
+        detected = {
+            'cathodes': cathode_list,
+            'gases_main': {'keys': ['main1', 'main2', 'main3'], 'cols': main_cols},
+            'gases_segmented': {'mode': mode, 'entities': entities, 'cols': seg_map},
+        }
+        logger.info(
+            'knob_schema detected: cathodes=%s on=%s main=%s segmented_mode=%s segmented_entities=%s',
+            len(cathode_list),
+            sum(1 for c in cathode_list if c.get('on')),
+            list((detected.get('gases_main') or {}).get('cols', {}).keys()),
+            mode,
+            entities,
+        )
         return {
             'cathodes': cathode_list,
             'gases_main': {'keys': ['main1', 'main2', 'main3'], 'cols': main_cols},

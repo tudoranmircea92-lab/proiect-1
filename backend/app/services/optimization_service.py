@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import Any
 
 import numpy as np
@@ -268,7 +269,70 @@ class OptimizationService:
             return "borderline", score
         return "out_of_domain", score
 
+
+    def _enforce_coupling(self, cand: dict[str, float], req: OptimizeRequest, knob_schema: dict[str, Any], ranges: dict[str, tuple[float, float]]) -> None:
+        mode = ((req.strategy or {}).gas_coupling if hasattr(req.strategy, 'gas_coupling') else 'segmented_only')
+        if mode == 'segmented_only':
+            return
+        main_cols = ((knob_schema.get('gases_main', {}) or {}).get('cols', {}) or {})
+        seg_cols = ((knob_schema.get('gases_segmented', {}) or {}).get('cols', {}) or {})
+        for key, main_col in main_cols.items():
+            if main_col not in cand:
+                continue
+            main_val = float(cand[main_col])
+            for entity, kmap in seg_cols.items():
+                scol = (kmap or {}).get(key)
+                if not scol or scol not in cand:
+                    continue
+                sval = float(cand[scol])
+                if mode in {'main_plus_scale_segmented', 'segmented_le_main'} and sval > main_val:
+                    cand[scol] = main_val
+                if mode == 'segmented_eq_main':
+                    cand[scol] = main_val
+                if scol in ranges:
+                    lo, hi = ranges[scol]
+                    cand[scol] = float(np.clip(cand[scol], lo, hi))
+
+    def _measurement_quality(self, profiles: dict[str, list[float]], req: OptimizeRequest) -> dict[str, Any]:
+        outliers = []
+        for metric in ['a', 'b']:
+            arr = np.array(profiles.get(metric, []), dtype=float)
+            if arr.size == 0:
+                continue
+            mu, sd = float(np.nanmean(arr)), float(np.nanstd(arr))
+            if sd < 1e-9:
+                continue
+            for idx, v in enumerate(arr, start=1):
+                z = abs((float(v)-mu)/sd)
+                if z > 2.5:
+                    outliers.append({'metric': metric, 'pos': idx, 'value': float(v), 'z': float(z)})
+        label = 'good' if not outliers else ('warning' if len(outliers) <= 2 else 'poor')
+        return {'label': label, 'outliers': outliers, 'ignore_outliers': bool(req.measurement.ignore_outliers)}
+
+    def _select_profiles(self, df: pd.DataFrame, baseline_row: dict[str, Any], req: OptimizeRequest) -> tuple[dict[str, list[float]], dict[str, Any]]:
+        mode = req.measurement.source
+        work = df
+        if req.plate_id and self.repo.plate_col(df):
+            sub = df[df[self.repo.plate_col(df)].astype(str)==str(req.plate_id)]
+            if not sub.empty:
+                work = sub
+        row = baseline_row
+        notes = {'source': mode, 'settle_mode': req.measurement.settle_mode}
+        if mode == 'median_n':
+            n = int(req.measurement.median_n)
+            sample = work.tail(n)
+            row = sample.median(numeric_only=False).to_dict() if not sample.empty else baseline_row
+            notes['rows_used'] = int(len(sample))
+        elif mode == 'stable_window':
+            n = int(req.measurement.stable_window_n)
+            sample = work.tail(n)
+            row = sample.median(numeric_only=False).to_dict() if not sample.empty else baseline_row
+            notes['rows_used'] = int(len(sample))
+        prof = self._profile_arrays(row, req.device)
+        return prof, notes
+
     def optimize(self, df_raw: pd.DataFrame, req: OptimizeRequest) -> dict:
+        t0 = time.perf_counter()
         if not self.trainer.feature_schema:
             raise ValueError("Train a model before running optimizer.")
 
@@ -310,7 +374,12 @@ class OptimizationService:
         for c in control_cols_all:
             lc = c.lower().replace("_", ".")
             prefix = lc.split(".")[0] if lc.startswith("c") else ""
-            if allow(c) and (".pwr" in lc or prefix in active_prefixes):
+            if not allow(c):
+                continue
+            if req.guardrails.on_only_cathodes and (".pwr" in lc or prefix):
+                if ".pwr" in lc or prefix in active_prefixes:
+                    control_cols.append(c)
+            else:
                 control_cols.append(c)
 
         bounds_df = df
@@ -325,7 +394,14 @@ class OptimizationService:
 
         baseline_pred = self.trainer.predict(baseline_control, fixed_context)
 
-        before_profiles = self._profile_arrays(baseline_row, req.device)
+        before_profiles, measurement_notes = self._select_profiles(df, baseline_row, req)
+        mquality = self._measurement_quality(before_profiles, req)
+        if req.measurement.ignore_outliers and mquality.get("outliers"):
+            for o in mquality["outliers"]:
+                metric = o["metric"]; pos = int(o["pos"])-1
+                arr = before_profiles.get(metric, [])
+                if 0 <= pos < len(arr):
+                    arr[pos] = float(np.nanmedian(np.array(arr, dtype=float)))
         before_stats = {
             "std_a": self._profile_stats(before_profiles["a"])["std"],
             "std_b": self._profile_stats(before_profiles["b"])["std"],
@@ -357,6 +433,7 @@ class OptimizationService:
 
             if req.guardrails.max_total_change is not None and moved > req.guardrails.max_total_change:
                 continue
+            self._enforce_coupling(cand, req, knob_schema, ranges)
 
             pred = self.trainer.predict(cand, fixed_context)
 
@@ -524,8 +601,11 @@ class OptimizationService:
             "knob_changes": changes,
             "bounds": {k: {"min": v[0], "max": v[1]} for k, v in ranges.items()},
             "diagnostics": {"iterations": req.params.n_iterations, "best_loss": best_loss, "warnings": warnings},
-            "meta": {"runtime_ms": None, "evaluated": evaluated, "accepted": accepted, "best_score": best_loss, "seed": req.params.n_iterations},
+            "meta": {"runtime_ms": float((time.perf_counter()-t0)*1000.0), "evaluated": evaluated, "accepted": accepted, "best_score": best_loss, "seed": req.params.n_iterations},
             "device": req.device,
             "plate_id": req.plate_id,
             "knob_schema": knob_schema,
+            "measurement_quality": mquality,
+            "measurement_notes": measurement_notes,
+            "prediction_interval": {"enabled": bool(req.measurement.prediction_interval), "lcl": None, "ucl": None},
         }

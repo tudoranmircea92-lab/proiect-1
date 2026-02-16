@@ -46,6 +46,12 @@ export function OptimizePage() {
   const [stgSeg, setStgSeg] = useState(true)
   const [stgPower, setStgPower] = useState(true)
   const [stgMain, setStgMain] = useState(false)
+  const [coupling, setCoupling] = useState<'segmented_only' | 'main_plus_scale_segmented' | 'segmented_le_main' | 'segmented_eq_main'>('segmented_only')
+  const [maxStepPct, setMaxStepPct] = useState<number | ''>('')
+  const [measurementSource, setMeasurementSource] = useState<'last_plate' | 'median_n' | 'stable_window'>('last_plate')
+  const [settleMode, setSettleMode] = useState<'immediate' | 'after_settle'>('immediate')
+  const [ignoreOutliers, setIgnoreOutliers] = useState(false)
+  const [predInterval, setPredInterval] = useState(false)
 
   const [actual, setActual] = useState<any>(null)
   const [baseline, setBaseline] = useState<any>(null)
@@ -145,7 +151,7 @@ export function OptimizePage() {
     spec: { a_rg: { min: 2, max: 6 }, b_rg: { min: -4, max: 0 } },
     objective: { w_std_a: wStdA, w_std_b: wStdB, w_range_a: wRangeA, w_range_b: wRangeB, w_smoothness: wSmoothness, w_delta: wDelta },
     strategy: {
-      gas_coupling: 'segmented_only',
+      gas_coupling: coupling,
       stages: [
         { name: 'segmented_gases', enabled: stgSeg },
         { name: 'cathode_power', enabled: stgPower },
@@ -153,7 +159,8 @@ export function OptimizePage() {
       ],
     },
     robustness: { enabled: robEnabled, jitter_pct: robJitter, n_simulations: robN },
-    guardrails: { max_total_change: maxTotalChange === '' ? null : Number(maxTotalChange) },
+    guardrails: { max_step_pct: maxStepPct === '' ? null : Number(maxStepPct), max_total_change: maxTotalChange === '' ? null : Number(maxTotalChange), on_only_cathodes: true },
+    measurement: { source: measurementSource, median_n: 5, stable_window_n: 5, settle_mode: settleMode, ignore_outliers: ignoreOutliers, prediction_interval: predInterval },
   })
 
   const run = async () => {
@@ -306,6 +313,16 @@ export function OptimizePage() {
         <label className='text-sm'><input type='checkbox' checked={stgPower} onChange={(e) => setStgPower(e.target.checked)} /> Stage 2 cathode power</label>
         <label className='text-sm'><input type='checkbox' checked={stgMain} onChange={(e) => setStgMain(e.target.checked)} /> Stage 3 main gases</label>
       </div>
+      <div className='grid md:grid-cols-4 gap-2'>
+        <div><label className='text-xs'>Coupling</label><Select value={coupling} onChange={(e: any) => setCoupling(e.target.value)}><option value='segmented_only'>segmented_only</option><option value='main_plus_scale_segmented'>main_plus_scale_segmented</option><option value='segmented_le_main'>segmented_le_main</option><option value='segmented_eq_main'>segmented_eq_main</option></Select></div>
+        <div><label className='text-xs'>max_step_pct</label><Input type='number' value={maxStepPct} onChange={(e: any) => setMaxStepPct(e.target.value === '' ? '' : Number(e.target.value))} /></div>
+        <div><label className='text-xs'>Measurement source</label><Select value={measurementSource} onChange={(e: any) => setMeasurementSource(e.target.value)}><option value='last_plate'>last_plate</option><option value='median_n'>median_n</option><option value='stable_window'>stable_window</option></Select></div>
+        <div><label className='text-xs'>Settle mode</label><Select value={settleMode} onChange={(e: any) => setSettleMode(e.target.value)}><option value='immediate'>immediate</option><option value='after_settle'>after_settle</option></Select></div>
+      </div>
+      <div className='grid md:grid-cols-3 gap-2'>
+        <label className='text-sm'><input type='checkbox' checked={ignoreOutliers} onChange={(e) => setIgnoreOutliers(e.target.checked)} /> Ignore outliers</label>
+        <label className='text-sm'><input type='checkbox' checked={predInterval} onChange={(e) => setPredInterval(e.target.checked)} /> Prediction interval</label>
+      </div>
       <div className='grid md:grid-cols-3 gap-2'>
         <label className='text-sm'><input type='checkbox' checked={robEnabled} onChange={(e) => setRobEnabled(e.target.checked)} /> Robustness check</label>
         <div><label className='text-xs'>jitter %</label><Input type='number' value={robJitter} onChange={(e: any) => setRobJitter(Number(e.target.value))} /></div>
@@ -383,6 +400,11 @@ export function OptimizePage() {
           <Card className='p-2'>worst b: p{result.before?.worst_b?.pos} → p{result.after?.worst_b?.pos}</Card>
           <Card className='p-2'><Badge className={result.validity?.in_spec ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}>{result.validity?.in_spec ? 'All positions in spec after apply' : 'Out of spec after apply'}</Badge></Card>
         </div>
+        <div className='flex gap-2 items-center text-sm'>
+          <Badge className={result.measurement_quality?.label === 'good' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>Measurement: {result.measurement_quality?.label || 'unknown'}</Badge>
+          <span>Outliers: {(result.measurement_quality?.outliers || []).length}</span>
+        </div>
+        {!!(result.measurement_quality?.outliers || []).length && <Alert>Outliers: {(result.measurement_quality?.outliers || []).map((o: any) => `${o.metric} p${o.pos} z=${Number(o.z).toFixed(2)}`).join('; ')}</Alert>}
         {!!(result.validity?.violations || []).length && <Alert variant='destructive'>{(result.validity?.violations || []).map((v: any) => `${v.metric} p${v.pos}=${Number(v.value).toFixed(3)} not in [${v.min},${v.max}]`).join('; ')}</Alert>}
       </Card>
 
