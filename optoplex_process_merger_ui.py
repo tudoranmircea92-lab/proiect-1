@@ -361,13 +361,13 @@ def _prepare_long(df: pd.DataFrame) -> pd.DataFrame:
 
     # target info
     if "actTargetMaterial1" in df.columns:
-        base["acttar1"] = df["actTargetMaterial1"].map(_norm_target)
+        base["actTargetMaterial1"] = df["actTargetMaterial1"].map(_norm_target)
     if "actTarget2KWH" in df.columns:
         base["kwh2"] = _safe_float32(df["actTarget2KWH"])
     if "actTarget1KWH" in df.columns:
         base["kwh1"] = _safe_float32(df["actTarget1KWH"])
     if "actTargetMaterial2" in df.columns:
-        base["acttar2"] = df["actTargetMaterial2"].map(_norm_target)
+        base["actTargetMaterial2"] = df["actTargetMaterial2"].map(_norm_target)
 
     base["plate"] = base["plate"].astype("Int64")
     base["comp"] = base["comp"].astype("Int64")
@@ -400,12 +400,12 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     else:
         global_df = d_all[["ts", "plate"]].drop_duplicates().copy()
 
-    # Relevant compartments ONLY: with real acttar1/acttar2
+    # Relevant compartments ONLY: with real actTargetMaterial1/actTargetMaterial2
     d = d_all
     relevant = set()
-    if "acttar1" in d_all.columns or "acttar2" in d_all.columns:
-        m1 = d_all["acttar1"].notna() if "acttar1" in d_all.columns else pd.Series(False, index=d_all.index)
-        m2 = d_all["acttar2"].notna() if "acttar2" in d_all.columns else pd.Series(False, index=d_all.index)
+    if "actTargetMaterial1" in d_all.columns or "actTargetMaterial2" in d_all.columns:
+        m1 = d_all["actTargetMaterial1"].notna() if "actTargetMaterial1" in d_all.columns else pd.Series(False, index=d_all.index)
+        m2 = d_all["actTargetMaterial2"].notna() if "actTargetMaterial2" in d_all.columns else pd.Series(False, index=d_all.index)
         relevant = set(d_all.loc[m1 | m2, "comp"].astype(int).tolist())
 
     # if no relevant compartments => keep only global columns
@@ -415,31 +415,31 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     d = d_all[d_all["comp"].isin(relevant)].copy()
 
     # Build per-comp values (minimal set)
-    keep_candidates = ["pwr", "voltage", "current"] + [f"s{i}g" for i in range(1, 12)] + ["m1g", "m2g", "m3g", "acttar1", "kwh1", "acttar2", "kwh2"]
+    keep_candidates = ["pwr", "voltage", "current"] + [f"s{i}g" for i in range(1, 12)] + ["m1g", "m2g", "m3g", "actTargetMaterial1", "kwh1", "actTargetMaterial2", "kwh2"]
     value_cols = [c for c in keep_candidates if c in d.columns]
 
     if not value_cols:
         return global_df.copy()
 
-    # keep acttar2/kwh2 ONLY for compartments that have real target2
+    # keep actTargetMaterial2/kwh2 ONLY for compartments that have real target2
     comps_with_tar2 = set()
-    if "acttar2" in d.columns:
-        comps_with_tar2 = set(d.loc[d["acttar2"].notna(), "comp"].astype(int).tolist())
+    if "actTargetMaterial2" in d.columns:
+        comps_with_tar2 = set(d.loc[d["actTargetMaterial2"].notna(), "comp"].astype(int).tolist())
 
     # aggregate per (ts, plate, comp)
     agg = {}
     for c in value_cols:
-        if c in {"acttar1", "acttar2"}:
+        if c in {"actTargetMaterial1", "actTargetMaterial2"}:
             agg[c] = "first"
         else:
             agg[c] = "mean"
 
     per_comp = d.groupby(["ts", "plate", "comp"], as_index=False).agg(agg)
 
-    # remove acttar2/kwh2 rows for comps without real target2
-    if "acttar2" in per_comp.columns:
+    # remove actTargetMaterial2/kwh2 rows for comps without real target2
+    if "actTargetMaterial2" in per_comp.columns:
         mask_tar2_comp = per_comp["comp"].isin(comps_with_tar2)
-        per_comp.loc[~mask_tar2_comp, "acttar2"] = pd.NA
+        per_comp.loc[~mask_tar2_comp, "actTargetMaterial2"] = pd.NA
         if "kwh2" in per_comp.columns:
             per_comp.loc[~mask_tar2_comp, "kwh2"] = pd.NA
 
@@ -450,7 +450,7 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     out = global_df.merge(wide, on=["ts", "plate"], how="left")
 
     # generic filter: keep only allowed c{comp}.<minimal>
-    allowed_suffix = set(["pwr", "voltage", "current", "m1g", "m2g", "m3g", "acttar1", "kwh1", "acttar2", "kwh2"] + [f"s{i}g" for i in range(1, 12)])
+    allowed_suffix = set(["pwr", "voltage", "current", "m1g", "m2g", "m3g", "actTargetMaterial1", "kwh1", "actTargetMaterial2", "kwh2"] + [f"s{i}g" for i in range(1, 12)])
     keep_cols = []
     for c in out.columns:
         if not c.startswith("c") or "." not in c:
@@ -531,6 +531,10 @@ def load_process_dataset(files: List[Path], log, progress=None, progress_base: f
     long_all = pd.concat(longs, ignore_index=True)
     long_all = long_all.sort_values(["ts", "plate", "comp"]).groupby(["ts", "plate", "comp"], as_index=False).first()
     wide = _pivot_wide(long_all)
+    comp_cols = [c for c in wide.columns if c.startswith("c") and "." in c]
+    rel_comps = sorted({int(c.split(".", 1)[0][1:]) for c in comp_cols if c.split(".", 1)[0][1:].isdigit()})
+    log(f"Relevant compartments in output: {len(rel_comps)}")
+
     wide["day"] = pd.to_datetime(wide["ts"], errors="coerce").dt.date
     wide["plate"] = pd.to_numeric(wide["plate"], errors="coerce").astype("Int64")
 

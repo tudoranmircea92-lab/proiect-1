@@ -178,12 +178,15 @@ def _build_file_plate_frame(
                 if src in dcomp.columns:
                     feature_map[src] = f"c{comp}.{target}"
 
-        feature_map["actTargetMaterial1"] = f"c{comp}.mat1"
+        feature_map["actTargetMaterial1"] = f"c{comp}.actTargetMaterial1"
         if "actTarget1KWH" in dcomp.columns:
             feature_map["actTarget1KWH"] = f"c{comp}.kwh1"
+        has_real_t2 = False
         if "actTargetMaterial2" in dcomp.columns:
-            feature_map["actTargetMaterial2"] = f"c{comp}.mat2"
-        if "actTarget2KWH" in dcomp.columns:
+            has_real_t2 = dcomp["actTargetMaterial2"].notna().any()
+            if has_real_t2:
+                feature_map["actTargetMaterial2"] = f"c{comp}.actTargetMaterial2"
+        if "actTarget2KWH" in dcomp.columns and has_real_t2:
             feature_map["actTarget2KWH"] = f"c{comp}.kwh2"
 
         use_cols = [c for c in feature_map if c in dcomp.columns]
