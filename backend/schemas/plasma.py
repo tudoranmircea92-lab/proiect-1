@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class PlasmaHealthResponse(BaseModel):
@@ -25,10 +25,12 @@ class PlasmaStabilityFilters(BaseModel):
 
 
 class PlasmaStabilityRequest(BaseModel):
-    from_ts: datetime
-    to_ts: datetime
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_ts: datetime = Field(validation_alias=AliasChoices("from_ts", "from"))
+    to_ts: datetime = Field(validation_alias=AliasChoices("to_ts", "to"))
     active_threshold: float = 0.0
-    aggregation: Literal["mean", "median"] = "mean"
+    aggregation: Literal["mean", "median"] = Field(default="mean", validation_alias=AliasChoices("aggregation", "agg"))
     group_by: list[str] = Field(default_factory=lambda: ["device", "plate"])
     features: list[str] = Field(default_factory=list)
     filters: PlasmaStabilityFilters = Field(default_factory=PlasmaStabilityFilters)

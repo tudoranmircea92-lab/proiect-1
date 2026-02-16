@@ -50,3 +50,20 @@ def test_legacy_forward_works():
     assert res.status_code == 200
     body = res.json()
     assert 'window' in body and 'score' in body
+
+
+def test_plasma_stability_accepts_from_to_and_agg_aliases():
+    payload = {
+        'from': '2026-02-09T14:12:00',
+        'to': '2026-02-16T14:12:00',
+        'active_threshold': 0.0,
+        'agg': 'mean',
+        'group_by': ['device', 'plate'],
+        'features': ['c4.pwr'],
+        'filters': {'product': [], 'thickness_mm': []},
+    }
+    res = client.post('/api/plasma/stability', json=payload)
+    assert res.status_code == 200
+    body = res.json()
+    assert body['params']['aggregation'] == 'mean'
+    assert body['window']['from_ts'].startswith('2026-02-09')
