@@ -131,36 +131,30 @@ class OptimizeResponse(BaseModel):
     method: str
 
 
+class PlasmaWeights(BaseModel):
+    vacuum: float = 0.7
+    uniform_cur: float = 0.7
+    uniform_pwr: float = 0.7
+
+
 class PlasmaStabilityRequest(BaseModel):
     dataset_id: str | None = None
-    path_or_dataset_id: str | None = None
-    mode: Literal["auto", "timeseries", "wide_auto"] = "auto"
-    date_from: str
-    date_to: str
-    time_from: str | None = None
-    time_to: str | None = None
+    timestamp_col: Literal["auto", "ts", "file_ts"] = "auto"
+    from_ts: str = Field(validation_alias=AliasChoices("from_ts", "from", "date_from"), serialization_alias="from")
+    to_ts: str = Field(validation_alias=AliasChoices("to_ts", "to", "date_to"), serialization_alias="to")
     active_threshold: float = 0.0
-    metrics: list[str] = Field(default_factory=lambda: ["cv_power", "cv_current", "vacuum_cv", "uniformity_cv_power", "uniformity_cv_current"])
-    rolling_window_sec: int = 30
     agg: Literal["mean", "median"] = "mean"
-    weights: dict[str, float] = Field(default_factory=lambda: {
-        "cv_power": 1.0,
-        "cv_current": 1.0,
-        "ripple_power": 0.5,
-        "ripple_current": 0.5,
-        "vacuum_cv": 0.5,
-        "uniformity_cv_power": 0.7,
-        "uniformity_cv_current": 0.7,
-    })
+    weights: PlasmaWeights = PlasmaWeights()
+    bins: Literal["auto"] | int = "auto"
     show_inactive: bool = False
     filter: DataFilter | None = None
 
 
 class PlasmaStabilityResponse(BaseModel):
-    summary: dict[str, float]
+    interval: dict[str, Any]
+    kpis: dict[str, float | None]
     per_cathode: list[dict[str, Any]]
-    timeseries: dict[str, list[dict[str, Any]]]
-    mode_used: str
+    trends: dict[str, list[Any]]
 
 
 class DataLoadResponse(BaseModel):

@@ -139,7 +139,13 @@ def optimize(payload: OptimizeRequest):
     return sanitize_jsonable({'job_id': job_id})
 
 
-@router.post('/plasma_stability')
+@router.get('/plasma/columns')
+def plasma_columns(dataset_id: str):
+    df = repo.get(dataset_id)
+    return sanitize_jsonable(plasma.columns(df))
+
+
+@router.post('/plasma/stability')
 def plasma_stability(payload: PlasmaStabilityRequest):
     job_id = jobs.create()
 
@@ -147,23 +153,33 @@ def plasma_stability(payload: PlasmaStabilityRequest):
         df = repo.get(payload.dataset_id) if payload.dataset_id else repo.get()
         df = repo.apply_filter(df, payload.filter)
         result = plasma.compute(payload, df)
-        payload_out = {'summary': result.summary, 'per_cathode': result.per_cathode, 'timeseries': result.timeseries, 'mode_used': result.mode_used}
+        payload_out = {'interval': result.interval, 'kpis': result.kpis, 'per_cathode': result.per_cathode, 'trends': result.trends}
         bad = count_non_finite(payload_out)
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug('plasma_stability non-finite count=%s', bad)
+            logger.debug('plasma/stability non-finite count=%s', bad)
         return sanitize_jsonable(payload_out)
 
-    jobs.run_async(job_id, lambda: _job(work, [(15, 'Preparing analysis'), (45, 'Computing metrics'), (80, 'Aggregating KPIs'), (100, 'Done')])(job_id))
+    jobs.run_async(job_id, lambda: _job(work, [(15, 'Preparing analysis'), (45, 'Computing per-cathode metrics'), (80, 'Aggregating KPIs'), (100, 'Done')])(job_id))
     return sanitize_jsonable({'job_id': job_id})
 
 
-@router.get('/plasma_stability/export')
+@router.post('/plasma_stability')
+def plasma_stability_legacy(payload: PlasmaStabilityRequest):
+    return plasma_stability(payload)
+
+
+@router.get('/plasma/stability/export')
 def plasma_stability_export(format: str = Query('csv', pattern='^(csv|json)$')):
     try:
         media_type, content = plasma.export_last(format)
         return PlainTextResponse(content=content, media_type=media_type)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get('/plasma_stability/export')
+def plasma_stability_export_legacy(format: str = Query('csv', pattern='^(csv|json)$')):
+    return plasma_stability_export(format)
 
 
 @router.get('/data/seed-plates')
