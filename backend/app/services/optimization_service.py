@@ -274,6 +274,10 @@ class OptimizationService:
         mode = ((req.strategy or {}).gas_coupling if hasattr(req.strategy, 'gas_coupling') else 'segmented_only')
         if mode == 'segmented_only':
             return
+        if mode == 'enforce_sum_leq_main':
+            mode = 'segmented_le_main'
+        if mode == 'enforce_sum_eq_main':
+            mode = 'segmented_eq_main'
         main_cols = ((knob_schema.get('gases_main', {}) or {}).get('cols', {}) or {})
         seg_cols = ((knob_schema.get('gases_segmented', {}) or {}).get('cols', {}) or {})
         for key, main_col in main_cols.items():
@@ -428,6 +432,9 @@ class OptimizationService:
                 center = baseline_control.get(k, lo)
                 width = (hi - lo) * (req.bounds.gas_pct if "g" in k.lower() else req.bounds.pwr_pct) / 100.0
                 value = np.random.uniform(center - width, center + width)
+                if req.guardrails.max_step_pct is not None:
+                    step = max(abs(float(center)), 1.0) * float(req.guardrails.max_step_pct) / 100.0
+                    value = float(np.clip(value, center - step, center + step))
                 cand[k] = float(np.clip(value, lo, hi))
                 moved += abs(cand[k] - baseline_control.get(k, 0.0))
 

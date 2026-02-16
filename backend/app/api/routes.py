@@ -102,6 +102,21 @@ def models_available():
     return sanitize_jsonable(payload)
 
 
+
+
+@router.post('/models/active')
+def set_active_model(payload: dict):
+    product = str(payload.get('product', '')).strip()
+    model_id = str(payload.get('model_id', '')).strip()
+    if not product or not model_id:
+        raise HTTPException(status_code=422, detail='product and model_id are required')
+    return sanitize_jsonable(trainer.set_active_model(product, model_id))
+
+
+@router.get('/models/active')
+def get_active_model(product: str):
+    return sanitize_jsonable(trainer.get_active_model(product))
+
 @router.post('/train')
 def train(payload: TrainRequest):
     job_id = jobs.create()
@@ -205,10 +220,65 @@ def predict(payload: PredictRequest):
 
 
 
+
 @router.post('/predict_profile')
 def predict_profile(payload: PredictRequest):
-    # Backward-compatible alias for clients expecting /predict_profile.
-    return predict(payload)
+    job_id = jobs.create()
+
+    def work():
+        if not payload.plate_id:
+            raise ValueError('plate_id is required for predict_profile')
+        if not trainer.feature_schema:
+            raise ValueError('Train a model first before predict_profile.')
+
+        baseline = repo.plate_baseline(payload.dataset_id, payload.plate_id, trainer.feature_schema.get('control_knobs', []), filt=payload.filter)
+        row = repo.plate_row(payload.dataset_id, payload.plate_id, filt=payload.filter)
+
+        context = {}
+        for k in trainer.feature_schema.get('context_numeric', []):
+            v = row.get(k, 0.0)
+            context[k] = 0.0 if v is None else float(v) if str(v) not in {'nan', 'NaT'} else 0.0
+        for k in trainer.feature_schema.get('context_categorical', []):
+            v = row.get(k, '')
+            context[k] = '' if v is None else v
+
+        baseline_knobs = {k: float(v) for k, v in baseline['baseline_knobs'].items()}
+        edited = dict(baseline_knobs)
+        for k, v in (payload.knob_overrides or {}).items():
+            if k in edited:
+                edited[k] = float(v)
+
+        pred_base = trainer.predict(baseline_knobs, context)
+        pred_edit = trainer.predict(edited, context)
+
+        actual_dev = baseline['actual_color'].get(payload.device, {})
+        a_points = list(actual_dev.get('a_points') or [actual_dev.get('a_mean')] * 9)
+        b_points = list(actual_dev.get('b_points') or [actual_dev.get('b_mean')] * 9)
+
+        da = float(pred_edit.get(f'a_{payload.device}_mean', 0.0) - pred_base.get(f'a_{payload.device}_mean', 0.0))
+        db = float(pred_edit.get(f'b_{payload.device}_mean', 0.0) - pred_base.get(f'b_{payload.device}_mean', 0.0))
+
+        pred_a = [float(x if x is not None else 0.0) + da for x in a_points][:9]
+        pred_b = [float(x if x is not None else 0.0) + db for x in b_points][:9]
+        if len(pred_a) < 9:
+            pred_a = pred_a + [pred_a[-1] if pred_a else 0.0] * (9 - len(pred_a))
+        if len(pred_b) < 9:
+            pred_b = pred_b + [pred_b[-1] if pred_b else 0.0] * (9 - len(pred_b))
+
+        df = repo.get(payload.dataset_id)
+        ctrl_cols = [c for c in trainer.feature_schema.get('control_knobs', []) if c in df.columns]
+        domain_label, domain_score = optimizer._domain_score(edited, df, ctrl_cols)
+
+        return sanitize_jsonable({
+            'plate_id': payload.plate_id,
+            'device': payload.device,
+            'actual_profile': {'a': a_points[:9], 'b': b_points[:9]},
+            'predicted_profile': {'a': pred_a, 'b': pred_b},
+            'domain_score': {'label': domain_label, 'score': domain_score},
+        })
+
+    jobs.run_async(job_id, lambda: _job(work, [(20, 'Building profile row'), (60, 'Predicting profile'), (100, 'Done')])(job_id))
+    return sanitize_jsonable({'job_id': job_id})
 
 
 @router.post('/optimize')

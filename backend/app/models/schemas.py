@@ -130,7 +130,7 @@ class OptimizeStage(BaseModel):
 
 
 class OptimizeStrategy(BaseModel):
-    gas_coupling: Literal["segmented_only", "main_plus_scale_segmented", "segmented_le_main", "segmented_eq_main"] = "segmented_only"
+    gas_coupling: Literal["segmented_only", "main_plus_scale_segmented", "segmented_le_main", "segmented_eq_main", "enforce_sum_leq_main", "enforce_sum_eq_main"] = "segmented_only"
     stages: list[OptimizeStage] = Field(default_factory=lambda: [
         OptimizeStage(name="segmented_gases", enabled=True),
         OptimizeStage(name="cathode_power", enabled=True),

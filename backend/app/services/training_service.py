@@ -28,6 +28,7 @@ class TrainingService:
         self.artifacts_root.mkdir(parents=True, exist_ok=True)
         self.current_pipeline: Pipeline | None = None
         self.feature_schema: dict = {}
+        self.active_models: dict[str, str] = {}
 
     def _mode_params(self, training_mode: str) -> dict:
         if training_mode == "fast":
@@ -55,6 +56,14 @@ class TrainingService:
 
             return MultiOutputRegressor(CatBoostRegressor(verbose=0, random_seed=42))
         raise ValueError(f"Unsupported estimator_type: {model_type}")
+
+
+    def set_active_model(self, product: str, model_id: str) -> dict[str, str]:
+        self.active_models[str(product)] = str(model_id)
+        return {'product': str(product), 'model_id': str(model_id)}
+
+    def get_active_model(self, product: str) -> dict[str, str | None]:
+        return {'product': str(product), 'model_id': self.active_models.get(str(product))}
 
     def available_models(self) -> list[str]:
         models = ["hist_gradient_boosting", "random_forest"]
@@ -115,6 +124,7 @@ class TrainingService:
         X = train_df[selection.selected_features].copy()
         y = train_df[TARGET_COLUMNS].apply(pd.to_numeric, errors="coerce").fillna(0.0)
 
+        split_windows = None
         if config.split.method == "time":
             ts_col = "file_ts" if "file_ts" in train_df.columns else "ts" if "ts" in train_df.columns else None
             if not ts_col:
@@ -124,6 +134,11 @@ class TrainingService:
             cut = int(len(X) * config.split.ratio)
             X_train, X_val = X.iloc[:cut], X.iloc[cut:]
             y_train, y_val = y.iloc[:cut], y.iloc[cut:]
+            split_windows = {
+                "train_end": str(train_df.loc[sorted_idx].iloc[max(cut - 1, 0)][ts_col]) if len(sorted_idx) else None,
+                "val_start": str(train_df.loc[sorted_idx].iloc[min(cut, len(sorted_idx)-1)][ts_col]) if len(sorted_idx) else None,
+                "time_col": ts_col,
+            }
         elif config.split.method == "by_product":
             product_col = next((c for c in train_df.columns if str(c).lower() in {"product", "product_name", "productcode", "recipe", "part"}), None)
             if not product_col:
@@ -198,6 +213,11 @@ class TrainingService:
         joblib.dump(pipeline, run_dir / "model.pkl")
         (run_dir / "feature_schema.json").write_text(json.dumps(schema, indent=2), encoding="utf-8")
         (run_dir / "target_columns.json").write_text(json.dumps(TARGET_COLUMNS, indent=2), encoding="utf-8")
+        (run_dir / "config.json").write_text(json.dumps(config.model_dump(mode="json"), indent=2), encoding="utf-8")
+        (run_dir / "metrics.json").write_text(json.dumps({"metrics_per_target": metrics_per_target}, indent=2), encoding="utf-8")
+        (run_dir / "feature_list.json").write_text(json.dumps(selection.selected_features, indent=2), encoding="utf-8")
+        schema_hash = uuid.uuid5(uuid.NAMESPACE_DNS, json.dumps(schema, sort_keys=True)).hex[:16]
+        (run_dir / "schema_hash.txt").write_text(schema_hash, encoding="utf-8")
 
         trained_at = datetime.now(timezone.utc).isoformat()
         report = {
@@ -220,6 +240,9 @@ class TrainingService:
             "trained_at": trained_at,
             "dataset_id": dataset_id,
             "random_seed": config.split.random_seed,
+            "split_windows": split_windows,
+            "schema_hash": schema_hash,
+            "artifact_dir": str(run_dir),
         }
         (run_dir / "training_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 

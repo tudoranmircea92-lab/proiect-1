@@ -4,3 +4,6 @@ node_modules/
 .venv/
 dist/
 frontend/tsconfig.tsbuildinfo
+backend/app/artifacts_cache/
+backend/workspace/uploads/
+tmp/
