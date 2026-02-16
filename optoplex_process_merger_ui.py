@@ -410,7 +410,7 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
 
     # if no relevant compartments => keep only global columns
     if not relevant:
-        return global_df.copy()
+        return _round_process_columns(global_df.copy())
 
     d = d_all[d_all["comp"].isin(relevant)].copy()
 
@@ -419,7 +419,7 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     value_cols = [c for c in keep_candidates if c in d.columns]
 
     if not value_cols:
-        return global_df.copy()
+        return _round_process_columns(global_df.copy())
 
     # keep actTargetMaterial2/kwh2 ONLY for compartments that have real target2
     comps_with_tar2 = set()
@@ -460,7 +460,58 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
         if suffix in allowed_suffix:
             keep_cols.append(c)
     out = out[keep_cols]
+    out = _cleanup_target_columns(out)
+    out = _round_process_columns(out)
     return out
+
+
+def _cleanup_target_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop target/kwh columns when corresponding target material is missing."""
+    drop_cols = []
+    by_comp = {}
+    for c in df.columns:
+        if not c.startswith("c") or "." not in c:
+            continue
+        comp, feat = c.split(".", 1)
+        by_comp.setdefault(comp, {})[feat] = c
+
+    for comp, feats in by_comp.items():
+        m1_col = feats.get("actTargetMaterial1")
+        m2_col = feats.get("actTargetMaterial2")
+        k1_col = feats.get("kwh1")
+        k2_col = feats.get("kwh2")
+
+        has_m1 = bool(m1_col) and df[m1_col].notna().any()
+        has_m2 = bool(m2_col) and df[m2_col].notna().any()
+
+        if m1_col and not has_m1:
+            drop_cols.append(m1_col)
+        if k1_col and not has_m1:
+            drop_cols.append(k1_col)
+
+        if m2_col and not has_m2:
+            drop_cols.append(m2_col)
+        if k2_col and not has_m2:
+            drop_cols.append(k2_col)
+
+    if drop_cols:
+        df = df.drop(columns=sorted(set(drop_cols)), errors="ignore")
+    return df
+
+
+def _round_process_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Round process numeric columns to 2 decimals, except vacuum."""
+    keep_full_precision = {"actVacuumPressure"}
+    for c in df.columns:
+        if c in keep_full_precision:
+            continue
+        if c.startswith("c") and "." in c:
+            suffix = c.split(".", 1)[1]
+            if suffix.startswith("actTargetMaterial"):
+                continue
+        if pd.api.types.is_numeric_dtype(df[c]):
+            df[c] = df[c].round(2)
+    return df
 
 
 # ===========

@@ -213,6 +213,49 @@ def _build_file_plate_frame(
     return final, relevant_comps
 
 
+def _cleanup_target_columns(df: pd.DataFrame) -> pd.DataFrame:
+    drop_cols = []
+    by_comp = {}
+    for c in df.columns:
+        if not c.startswith("c") or "." not in c:
+            continue
+        comp, feat = c.split(".", 1)
+        by_comp.setdefault(comp, {})[feat] = c
+
+    for _, feats in by_comp.items():
+        m1 = feats.get("actTargetMaterial1")
+        m2 = feats.get("actTargetMaterial2")
+        k1 = feats.get("kwh1")
+        k2 = feats.get("kwh2")
+
+        has_m1 = bool(m1) and df[m1].notna().any()
+        has_m2 = bool(m2) and df[m2].notna().any()
+
+        if m1 and not has_m1:
+            drop_cols.append(m1)
+        if k1 and not has_m1:
+            drop_cols.append(k1)
+        if m2 and not has_m2:
+            drop_cols.append(m2)
+        if k2 and not has_m2:
+            drop_cols.append(k2)
+
+    if drop_cols:
+        df = df.drop(columns=sorted(set(drop_cols)), errors="ignore")
+    return df
+
+
+def _round_process_columns(df: pd.DataFrame) -> pd.DataFrame:
+    for c in df.columns:
+        if c == "actVacuumPressure":
+            continue
+        if c.startswith("c") and "." in c and c.split(".", 1)[1].startswith("actTargetMaterial"):
+            continue
+        if pd.api.types.is_numeric_dtype(df[c]):
+            df[c] = df[c].round(2)
+    return df
+
+
 def build_process_parquet(
     input_dir: Path,
     output_file: Path,
@@ -254,6 +297,8 @@ def build_process_parquet(
 
     merged = pd.concat(parts, ignore_index=True, sort=False)
     merged = merged.sort_values(["day", "plate"]).groupby(["day", "plate"], as_index=False).first()
+    merged = _cleanup_target_columns(merged)
+    merged = _round_process_columns(merged)
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     merged.to_parquet(output_file, index=False)

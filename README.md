@@ -49,3 +49,5 @@ Target-urile pe compartiment sunt minimizate: `cX.actTargetMaterial2`/`cX.kwh2` 
 Dacă într-un batch nu există niciun compartiment cu material real, output-ul process păstrează doar coloanele globale (fără `cX.*`).
 
 Target-urile per compartiment sunt expuse explicit ca `cX.actTargetMaterial1` și `cX.actTargetMaterial2` (iar `actTargetMaterial2` apare doar unde există real).
+
+Valorile numerice process sunt rotunjite la max. 2 zecimale, cu excepția `actVacuumPressure` (păstrată la precizie completă).
