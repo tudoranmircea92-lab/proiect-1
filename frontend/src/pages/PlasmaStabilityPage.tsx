@@ -2,7 +2,9 @@ import { Download, Play } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Accordion, Alert, Badge, Button, Card, Input, Progress, Select, Skeleton } from '../components/ui'
-import { API_BASE, api, resolveApiUrl } from '../lib/api'
+import { api } from '../lib/api'
+import { apiUrl } from '../api/config'
+import { plasmaHealth, plasmaStability } from '../api/plasma'
 import { useDataset } from '../lib/datasetContext'
 import { waitForJob } from '../lib/jobs'
 
@@ -19,10 +21,9 @@ function level(score: number | null | undefined) {
   return { label: 'Bad', cls: 'bg-red-100 text-red-700' }
 }
 
-let healthLogOnce = false
 
 export function PlasmaStabilityPage() {
-  const { datasetId, globalFilters } = useDataset()
+  const { datasetId } = useDataset()
   const now = new Date()
   const [fromTs, setFromTs] = useState(new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 16))
   const [toTs, setToTs] = useState(now.toISOString().slice(0, 16))
@@ -43,17 +44,9 @@ export function PlasmaStabilityPage() {
 
   useEffect(() => {
     let mounted = true
-    const healthPath = '/api/plasma/health'
-    const finalUrl = resolveApiUrl(healthPath)
+    const finalUrl = apiUrl('/api/plasma/health')
 
-    if (!healthLogOnce && (import.meta as any)?.env?.DEV) {
-      // one-time local diagnostics for plasma wiring
-      console.log('[plasma health] url=', finalUrl)
-      console.log('[plasma health] base=', API_BASE)
-      healthLogOnce = true
-    }
-
-    api.get(healthPath).then(() => {
+    plasmaHealth().then(() => {
       if (!mounted) return
       setPlasmaReady(true)
       setHealthMsg('')
@@ -61,13 +54,11 @@ export function PlasmaStabilityPage() {
     }).catch((e: any) => {
       if (!mounted) return
       setPlasmaReady(false)
-      const status = e?.response?.status
-      const detail = e?.response?.data?.detail
-      setHealthMsg(`Plasma backend not available. Check that /api/plasma is mounted. Open /docs and confirm plasma endpoints exist. ${status ? `(status ${status})` : ''}`)
+      setHealthMsg('Plasma backend not available. Open /docs and confirm plasma endpoints exist.')
       setHealthErrorDetails({
-        status: status ?? null,
-        url: (e?.config as any)?.__finalUrl || finalUrl,
-        response: e?.response?.data ?? { detail: detail || e?.message || 'Unknown error' },
+        status: null,
+        url: finalUrl,
+        response: { detail: e?.message || 'Unknown error' },
       })
     })
     return () => { mounted = false }
@@ -90,16 +81,10 @@ export function PlasmaStabilityPage() {
         agg,
         weights: { vacuum: 0.7, uniform_cur: 0.7, uniform_pwr: 0.7 },
         bins: 'auto',
-        filter: {
-          products: globalFilters.products,
-          thicknesses: globalFilters.thicknesses,
-          date_from: globalFilters.dateFrom || null,
-          date_to: globalFilters.dateTo || null,
-        },
       }
 
-      const start = await api.post('/api/plasma/stability', payload)
-      const maybeJobId = start?.data?.job_id
+      const start = await plasmaStability(payload)
+      const maybeJobId = start?.job_id
       if (maybeJobId) {
         setStage('Filtering rows')
         setProgress(15)
@@ -113,11 +98,11 @@ export function PlasmaStabilityPage() {
         setJobId('')
         setStage('Done')
         setProgress(100)
-        setResult(start.data)
+        setResult(start)
       }
     } catch (e: any) {
       const status = e?.response?.status ?? null
-      const url = (e?.config as any)?.__finalUrl || `${e?.config?.baseURL || ''}${e?.config?.url || '/api/plasma/stability'}`
+      const url = apiUrl('/api/plasma/stability')
       const response = e?.response?.data ?? null
       const detail = (typeof response?.detail === 'string' ? response.detail : e?.message) || 'Unknown error'
       setErrorObj({
@@ -175,7 +160,12 @@ export function PlasmaStabilityPage() {
     {!datasetId && <Alert variant='destructive'>Load data first.</Alert>}
 
     <Card className='space-y-3'>
-      <h3 className='text-sm font-medium tracking-tight'>Plasma Stability</h3>
+      <div className='flex items-center justify-between'>
+        <h3 className='text-sm font-medium tracking-tight'>Plasma Stability</h3>
+        <Badge className={plasmaReady ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}>
+          Backend: {plasmaReady ? 'Connected' : 'Disconnected'}
+        </Badge>
+      </div>
       <div className='grid md:grid-cols-5 gap-2 items-end'>
         <div><label className='text-xs text-slate-600'>From</label><Input type='datetime-local' value={fromTs} onChange={(e: any) => setFromTs(e.target.value)} /></div>
         <div><label className='text-xs text-slate-600'>To</label><Input type='datetime-local' value={toTs} onChange={(e: any) => setToTs(e.target.value)} /></div>
@@ -189,7 +179,7 @@ export function PlasmaStabilityPage() {
         <Accordion title='Show details'>
           <div className='text-xs space-y-1'>
             <p>Status: {healthErrorDetails?.status ?? '—'}</p>
-            <p>URL: {healthErrorDetails?.url ?? resolveApiUrl('/api/plasma/health')}</p>
+            <p>URL: {healthErrorDetails?.url ?? apiUrl('/api/plasma/health')}</p>
             <pre className='overflow-auto'>{JSON.stringify(healthErrorDetails?.response ?? {}, null, 2)}</pre>
           </div>
         </Accordion>
