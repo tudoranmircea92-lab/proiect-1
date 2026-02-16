@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -119,11 +120,88 @@ def train(payload: TrainRequest):
 def predict(payload: PredictRequest):
     job_id = jobs.create()
 
+    def _loss(pred: dict[str, float], target, tol, device: str, outputs: str):
+        if not target:
+            return None
+        if outputs == 'b_only':
+            t = float(target.b or 0.0)
+            tb = float((tol.b if tol else 0.0) or 0.0)
+            return float(max(0.0, abs(float(pred.get(f'b_{device}_mean', 0.0)) - t) - tb))
+        total = 0.0
+        for ch in ['L', 'a', 'b']:
+            tv = getattr(target, ch, None)
+            if tv is None:
+                continue
+            tolv = getattr(tol, ch, 0.0) if tol else 0.0
+            total += max(0.0, abs(float(pred.get(f'{ch}_{device}_mean', 0.0)) - float(tv)) - float(tolv or 0.0))
+        return float(total)
+
     def work():
+        if payload.plate_id:
+            if not trainer.feature_schema:
+                raise ValueError('Train a model first before prediction.')
+            baseline = repo.plate_baseline(payload.dataset_id, payload.plate_id, trainer.feature_schema.get('control_knobs', []), filt=payload.filter)
+            row = repo.plate_row(payload.dataset_id, payload.plate_id, filt=payload.filter)
+            context = {}
+            for k in trainer.feature_schema.get('context_numeric', []):
+                v = row.get(k, 0.0)
+                context[k] = 0.0 if v is None else float(v) if str(v) not in {'nan', 'NaT'} else 0.0
+            for k in trainer.feature_schema.get('context_categorical', []):
+                v = row.get(k, '')
+                context[k] = '' if v is None else v
+
+            baseline_knobs = {k: float(v) for k, v in baseline['baseline_knobs'].items()}
+            edited = dict(baseline_knobs)
+            for k, v in (payload.knob_overrides or {}).items():
+                if k in edited:
+                    edited[k] = float(v)
+
+            pred_baseline_full = trainer.predict(baseline_knobs, context)
+            pred_edited_full = trainer.predict(edited, context)
+            actual_dev = baseline['actual_color'].get(payload.device, {})
+
+            if payload.outputs == 'b_only':
+                actual = {'b': actual_dev.get('b_mean'), 'b_std': actual_dev.get('b_std'), 'b_points': actual_dev.get('b_points', [])}
+                pred_baseline = {'b': pred_baseline_full.get(f'b_{payload.device}_mean')}
+                pred_edited = {'b': pred_edited_full.get(f'b_{payload.device}_mean')}
+            else:
+                actual = {
+                    'L': actual_dev.get('L_mean'), 'L_std': actual_dev.get('L_std'), 'L_points': actual_dev.get('L_points', []),
+                    'a': actual_dev.get('a_mean'), 'a_std': actual_dev.get('a_std'), 'a_points': actual_dev.get('a_points', []),
+                    'b': actual_dev.get('b_mean'), 'b_std': actual_dev.get('b_std'), 'b_points': actual_dev.get('b_points', []),
+                }
+                pred_baseline = {k: pred_baseline_full.get(f'{k}_{payload.device}_mean') for k in ['L', 'a', 'b']}
+                pred_edited = {k: pred_edited_full.get(f'{k}_{payload.device}_mean') for k in ['L', 'a', 'b']}
+
+            changes = []
+            for k, base in baseline_knobs.items():
+                ev = float(edited.get(k, base))
+                delta = ev - float(base)
+                if abs(delta) < 1e-12:
+                    continue
+                lk = k.lower().replace('_', '.')
+                cath = lk.split('.')[0] if lk.startswith('c') else 'other'
+                changes.append({'cathode': cath, 'knob': k, 'baseline': float(base), 'edited': ev, 'delta': delta})
+
+            schema_hash = hashlib.sha256(json.dumps(trainer.feature_schema, sort_keys=True).encode('utf-8')).hexdigest()[:16]
+            out = {
+                'plate_id': payload.plate_id,
+                'device': payload.device,
+                'outputs': payload.outputs,
+                'actual': actual,
+                'pred_baseline': pred_baseline,
+                'pred_edited': pred_edited,
+                'loss_baseline': _loss(pred_baseline_full, payload.target, payload.tolerance, payload.device, payload.outputs),
+                'loss_edited': _loss(pred_edited_full, payload.target, payload.tolerance, payload.device, payload.outputs),
+                'knob_changes': changes,
+                'used_feature_schema_hash': schema_hash,
+            }
+            return sanitize_jsonable(out)
+
         _ = repo.apply_filter(repo.get(payload.dataset_id), payload.filter)
         return sanitize_jsonable({'predictions': trainer.predict(payload.control_knobs, payload.context)})
 
-    jobs.run_async(job_id, lambda: _job(work, [(15, 'Preparing input'), (55, 'Running model'), (100, 'Done')])(job_id))
+    jobs.run_async(job_id, lambda: _job(work, [(15, 'Fetching baseline'), (40, 'Building feature row'), (70, 'Predicting'), (100, 'Rendering results')])(job_id))
     return sanitize_jsonable({'job_id': job_id})
 
 
@@ -180,6 +258,21 @@ def plasma_stability_export(format: str = Query('csv', pattern='^(csv|json)$')):
 @router.get('/plasma_stability/export')
 def plasma_stability_export_legacy(format: str = Query('csv', pattern='^(csv|json)$')):
     return plasma_stability_export(format)
+
+
+@router.get('/seed_rows')
+def seed_rows(dataset_id: str, product: str | None = None, thickness: str | None = None, from_ts: str | None = None, to_ts: str | None = None, limit: int = 300):
+    filt = DataFilter(products=[product] if product else [], thicknesses=[thickness] if thickness else [], date_from=from_ts, date_to=to_ts)
+    rows = repo.seed_rows(dataset_id, filt=None if not any([product, thickness, from_ts, to_ts]) else filt, limit=limit)
+    return sanitize_jsonable({'rows': rows})
+
+
+@router.get('/plate/{plate_id}/baseline')
+def plate_baseline(plate_id: str, dataset_id: str, active_threshold: float = 0.0):
+    if not trainer.feature_schema:
+        raise HTTPException(status_code=400, detail='Train a model first')
+    payload = repo.plate_baseline(dataset_id, plate_id, trainer.feature_schema.get('control_knobs', []), active_threshold=active_threshold)
+    return sanitize_jsonable(payload)
 
 
 @router.get('/data/seed-plates')

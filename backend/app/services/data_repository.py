@@ -206,3 +206,49 @@ class DataRepository:
             "a_mean": a["mean"], "a_std": a["std"], "a_points": a["points"],
             "b_mean": b["mean"], "b_std": b["std"], "b_points": b["points"],
         }
+
+
+    def seed_rows(self, dataset_id: str, filt: DataFilter | None = None, limit: int = 300) -> list[dict]:
+        return self.plate_rows(dataset_id, filt=filt, limit=limit)
+
+    def plate_row(self, dataset_id: str, plate_id: str, filt: DataFilter | None = None) -> pd.Series:
+        df = self.apply_filter(self.get(dataset_id), filt)
+        plate_col = self.plate_col(df)
+        if not plate_col:
+            raise ValueError("No plate column in dataset")
+        matched = df[df[plate_col].astype(str) == str(plate_id)]
+        if matched.empty:
+            raise ValueError(f"Plate '{plate_id}' not found")
+        return matched.iloc[0]
+
+    def plate_baseline(self, dataset_id: str, plate_id: str, control_knobs: list[str], filt: DataFilter | None = None, active_threshold: float = 0.0) -> dict:
+        row = self.plate_row(dataset_id, plate_id, filt=filt)
+        df = self.apply_filter(self.get(dataset_id), filt)
+        ts_col = self.ts_col(df)
+        prod_col = self.product_col(df)
+        thick_col = self.thickness_col(df)
+
+        available_knobs = [k for k in control_knobs if k in df.columns and df[k].notna().any()]
+        baseline_knobs: dict[str, float] = {}
+        active_cathodes: list[str] = []
+        seen = set()
+        for k in available_knobs:
+            v = pd.to_numeric(row.get(k), errors="coerce")
+            baseline_knobs[k] = float(v) if pd.notna(v) else 0.0
+            lk = k.lower().replace('_', '.')
+            if lk.endswith('.pwr'):
+                cath = lk.split('.pwr')[0]
+                if baseline_knobs[k] > active_threshold and cath not in seen:
+                    seen.add(cath)
+                    active_cathodes.append(cath)
+
+        actual = {dev: self.color_profile(dataset_id, plate_id, dev) for dev in ["RG", "RF", "T"]}
+        return {
+            "plate_id": str(plate_id),
+            "ts": row.get(ts_col) if ts_col else None,
+            "product": str(row.get(prod_col, "")) if prod_col else "",
+            "thickness": str(row.get(thick_col, "")) if thick_col else "",
+            "active_cathodes": active_cathodes,
+            "baseline_knobs": baseline_knobs,
+            "actual_color": actual,
+        }

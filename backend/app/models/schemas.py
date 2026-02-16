@@ -54,8 +54,15 @@ class TrainRequest(BaseModel):
 
 class PredictRequest(BaseModel):
     dataset_id: str
-    control_knobs: dict[str, float]
-    context: dict[str, Any]
+    model_id: str | None = None
+    plate_id: str | None = None
+    device: Literal["RG", "RF", "T"] = "RG"
+    outputs: Literal["b_only", "lab"] = "b_only"
+    knob_overrides: dict[str, float] = Field(default_factory=dict)
+    target: DeviceTarget | None = None
+    tolerance: DeviceTarget | None = None
+    control_knobs: dict[str, float] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
     filter: DataFilter | None = None
 
 
@@ -197,4 +204,10 @@ class TrainResponse(BaseModel):
 
 
 class PredictResponse(BaseModel):
-    predictions: dict[str, float]
+    actual: dict[str, float | None]
+    pred_baseline: dict[str, float | None]
+    pred_edited: dict[str, float | None]
+    loss_baseline: float | None
+    loss_edited: float | None
+    knob_changes: list[dict[str, float | str]]
+    used_feature_schema_hash: str
