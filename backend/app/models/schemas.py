@@ -27,22 +27,18 @@ class SplitConfig(BaseModel):
 
 
 class TrainConfig(BaseModel):
-    model_type: Literal[
-        "hist_gradient_boosting",
-        "random_forest",
-        "xgboost",
-        "lightgbm",
-        "catboost",
-    ] = "hist_gradient_boosting"
+    model_type: Literal["hist_gradient_boosting", "random_forest", "xgboost", "lightgbm", "catboost"] = "hist_gradient_boosting"
     split: SplitConfig = SplitConfig()
     features: FeatureToggleConfig = FeatureToggleConfig()
 
 
 class TrainRequest(BaseModel):
+    dataset_id: str
     config: TrainConfig
 
 
 class PredictRequest(BaseModel):
+    dataset_id: str
     control_knobs: dict[str, float]
     context: dict[str, Any]
 
@@ -84,6 +80,7 @@ class OptimizeParams(BaseModel):
 
 
 class OptimizeRequest(BaseModel):
+    dataset_id: str
     targets: OptimizeTargets
     constraints: OptimizeConstraints | None = None
     method: Literal["nn", "search"] = "nn"
@@ -92,7 +89,6 @@ class OptimizeRequest(BaseModel):
     seed_plate: str | None = None
     seed_control_knobs: dict[str, float] | None = None
     seed_context: dict[str, Any] | None = None
-    match_context_mode: bool = False
 
 
 class Solution(BaseModel):
@@ -109,6 +105,7 @@ class OptimizeResponse(BaseModel):
 
 
 class PlasmaStabilityRequest(BaseModel):
+    dataset_id: str | None = None
     path_or_dataset_id: str | None = None
     mode: Literal["auto", "timeseries", "wide_auto"] = "auto"
     date_from: str
@@ -139,12 +136,21 @@ class PlasmaStabilityResponse(BaseModel):
 
 
 class DataLoadResponse(BaseModel):
+    dataset_id: str
+    saved_path: str | None = None
     rows: int
     columns: int
     preview: list[dict[str, Any]]
     grouped_columns: dict[str, list[str]]
     missing_summary: dict[str, int]
-    debug: dict[str, Any] = Field(default_factory=dict)
+    debug: dict[str, Any] | None = None
+
+
+class DataUploadResponse(BaseModel):
+    dataset_id: str
+    saved_path: str
+    format: str
+    profile: DataLoadResponse
 
 
 class TrainResponse(BaseModel):

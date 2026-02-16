@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
+import { useDataset } from '../lib/datasetContext'
 
 const empty = { L: 0, a: 0, b: 0 }
 
@@ -16,8 +17,9 @@ export function OptimizePage() {
   const [gasPct, setGasPct] = useState(5)
   const [sol, setSol] = useState<any[]>([])
   const [error, setError] = useState('')
+  const { datasetId } = useDataset()
 
-  useEffect(() => { api.get('/api/data/seed-plates').then(r => setSeedRows(r.data.rows || [])) }, [])
+  useEffect(() => { if (datasetId) api.get(`/api/data/seed-plates?dataset_id=${datasetId}`).then(r => setSeedRows(r.data.rows || [])) }, [datasetId])
   const seed = useMemo(() => (seedIdx === null ? null : seedRows[seedIdx]), [seedIdx, seedRows])
 
   const run = async () => {
@@ -27,7 +29,9 @@ export function OptimizePage() {
     }
     setError('')
     try {
+      if (!datasetId) { setError('Load data first'); return }
       const payload = {
+        dataset_id: datasetId,
         method,
         targets,
         constraints: stdMax,
@@ -50,6 +54,7 @@ export function OptimizePage() {
   }
 
   return <div className='space-y-4'>
+    {!datasetId && <section className='card text-slate-600'>Load data first from the Data tab.</section>}
     <section className='card space-y-3'>
       <h2 className='text-lg font-semibold'>Optimize</h2>
       <select className='input' value={seedIdx ?? ''} onChange={e=>setSeedIdx(e.target.value === '' ? null : Number(e.target.value))}>
@@ -73,7 +78,7 @@ export function OptimizePage() {
         <input className='input' type='number' value={pwrPct} onChange={e=>setPwrPct(Number(e.target.value))} placeholder='±% pwr'/>
         <input className='input' type='number' value={gasPct} onChange={e=>setGasPct(Number(e.target.value))} placeholder='±% gas'/>
       </div>
-      <button className='btn' onClick={run}>Generate Solutions</button>
+      <button className='btn' onClick={run} disabled={!datasetId}>Generate Solutions</button>
       {error && <p className='text-red-600 text-sm'>{error}</p>}
     </section>
 

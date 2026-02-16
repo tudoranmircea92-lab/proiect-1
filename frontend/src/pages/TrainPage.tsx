@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../lib/api'
+import { useDataset } from '../lib/datasetContext'
 
 export function TrainPage() {
   const [models, setModels] = useState<string[]>([])
@@ -18,15 +19,18 @@ export function TrainPage() {
     include_context_keyword_allowlist: true,
   })
   const [result, setResult] = useState<any>(null)
+  const [toast, setToast] = useState('')
+  const { datasetId } = useDataset()
   const [error, setError] = useState('')
 
   useEffect(() => { api.get('/api/models').then(r => setModels(r.data.models)) }, [])
 
   const train = async () => {
-    setError('')
+    if (!datasetId) { setError('Load data first'); return }
+    setError(''); setToast('')
     try {
-      const res = await api.post('/api/train', { config: { model_type: modelType, split: { method: split, ratio, random_seed: seed }, features: toggles } })
-      setResult(res.data)
+      const res = await api.post('/api/train', { dataset_id: datasetId, config: { model_type: modelType, split: { method: split, ratio, random_seed: seed }, features: toggles } })
+      setResult(res.data); setToast('Training completed successfully')
     } catch (e:any) {
       setError(e?.response?.data?.detail ?? 'Train failed')
     }
@@ -35,6 +39,7 @@ export function TrainPage() {
   const chartData = result ? Object.entries(result.metrics_per_target).map(([t, m]: any) => ({ target: t, mae: m.mae })) : []
 
   return <div className='space-y-4'>
+    {!datasetId && <section className='card text-slate-600'>Load data first from the Data tab.</section>}
     <section className='card space-y-3'>
       <h2 className='text-lg font-semibold'>Train</h2>
       <div className='grid md:grid-cols-4 gap-3'>
@@ -46,7 +51,8 @@ export function TrainPage() {
       <div className='grid md:grid-cols-4 gap-2 text-sm'>
         {Object.entries(toggles).map(([k,v])=><label key={k} className='flex gap-2 items-center'><input type='checkbox' checked={v} onChange={e=>setToggles({...toggles,[k]:e.target.checked})}/>{k}</label>)}
       </div>
-      <button className='btn' onClick={train}>Train Model</button>
+      <button className='btn' onClick={train} disabled={!datasetId}>Train Model</button>
+      {toast && <p className='text-emerald-600 text-sm'>{toast}</p>}
       {error && <p className='text-red-600 text-sm'>{error}</p>}
     </section>
 

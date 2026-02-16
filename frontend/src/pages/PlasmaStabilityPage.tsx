@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../lib/api'
+import { useDataset } from '../lib/datasetContext'
 
 const metricOptions = ['cv_current','cv_power','ripple_current','ripple_power','vacuum_cv','uniformity_cv_current','uniformity_cv_power']
 
@@ -23,12 +24,14 @@ export function PlasmaStabilityPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<any>(null)
+  const { datasetId } = useDataset()
 
   const run = async () => {
     setLoading(true)
     setError('')
     try {
       const res = await api.post('/api/plasma_stability', {
+        dataset_id: datasetId || null,
         path_or_dataset_id: path || null,
         mode,
         date_from: dateFrom,
@@ -90,6 +93,7 @@ export function PlasmaStabilityPage() {
   }
 
   return <div className='space-y-4'>
+    {!datasetId && !path && <section className='card text-slate-600'>Load data first or provide a dataset path for analysis.</section>}
     <section className='card space-y-3'>
       <h2 className='text-lg font-semibold'>Plasma Stability</h2>
       <div className='grid md:grid-cols-5 gap-2'>
@@ -112,7 +116,7 @@ export function PlasmaStabilityPage() {
       <div className='grid md:grid-cols-7 gap-2'>
         {Object.entries(weights).map(([k,v])=><label key={k} className='text-xs'>{k}<input className='input' type='number' step='0.1' value={v} onChange={e=>setWeights({...weights,[k]:Number(e.target.value)})}/></label>)}
       </div>
-      <button className='btn' onClick={run} disabled={loading}>{loading ? 'Running...' : 'Run Plasma Stability'}</button>
+      <button className='btn' onClick={run} disabled={loading || (!datasetId && !path)}>{loading ? 'Running...' : 'Run Plasma Stability'}</button>
       {error && <p className='text-red-600 text-sm'>{error}</p>}
     </section>
 

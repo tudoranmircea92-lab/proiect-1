@@ -7,6 +7,7 @@ import { TrainPage } from './pages/TrainPage'
 import { PredictPage } from './pages/PredictPage'
 import { OptimizePage } from './pages/OptimizePage'
 import { PlasmaStabilityPage } from './pages/PlasmaStabilityPage'
+import { DatasetProvider } from './lib/datasetContext'
 
 function Shell() {
   return (
@@ -36,8 +37,10 @@ function Shell() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <Shell />
-    </BrowserRouter>
+    <DatasetProvider>
+      <BrowserRouter>
+        <Shell />
+      </BrowserRouter>
+    </DatasetProvider>
   </React.StrictMode>,
 )

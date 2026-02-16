@@ -1,122 +1,133 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { api } from '../lib/api'
-
-type DebugEntry = { name: string; repr: string }
+import { useDataset } from '../lib/datasetContext'
 
 type LoadResp = {
+  dataset_id: string
+  saved_path?: string
   rows: number
   columns: number
   preview: Record<string, unknown>[]
   grouped_columns: Record<string, string[]>
   missing_summary: Record<string, number>
-  debug?: {
-    total_cols?: number
-    sample_cols_first_50?: DebugEntry[]
-    columns_containing_pwr?: DebugEntry[]
-    columns_containing_mainGas?: DebugEntry[]
-    columns_containing_s1g?: DebugEntry[]
-    warnings?: string[]
-  }
-}
-
-function InlineWarn({ title, examples }: { title: string; examples: DebugEntry[] }) {
-  return (
-    <div className="text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 text-xs">
-      <p className="font-medium">⚠️ {title}</p>
-      <p className="mt-1">Examples: {examples.slice(0, 5).map((x) => x.name).join(', ') || 'none'}</p>
-    </div>
-  )
+  debug?: Record<string, unknown>
 }
 
 export function DataPage() {
+  const fileRef = useRef<HTMLInputElement>(null)
   const [path, setPath] = useState('')
   const [format, setFormat] = useState<'auto' | 'csv' | 'parquet'>('auto')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [data, setData] = useState<LoadResp | null>(null)
   const [error, setError] = useState('')
+  const [toast, setToast] = useState('')
+  const [loadingUpload, setLoadingUpload] = useState(false)
+  const [loadingPath, setLoadingPath] = useState(false)
+  const { setDatasetId, setDatasetPath, datasetId } = useDataset()
 
-  const load = async () => {
+  const uploadProfile = async () => {
+    if (!selectedFile) return
+    setLoadingUpload(true)
     setError('')
+    setToast('')
+    try {
+      const form = new FormData()
+      form.append('file', selectedFile)
+      form.append('format', format)
+      const res = await api.post('/api/data/upload', form)
+      setData(res.data.profile)
+      setDatasetId(res.data.dataset_id)
+      setDatasetPath(res.data.saved_path)
+      setToast(`Dataset uploaded successfully (id: ${res.data.dataset_id})`)
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? 'Upload failed')
+    } finally {
+      setLoadingUpload(false)
+    }
+  }
+
+  const loadFromPath = async () => {
+    setLoadingPath(true)
+    setError('')
+    setToast('')
     try {
       const res = await api.post('/api/data/load', { path, format })
       setData(res.data)
+      setDatasetId(res.data.dataset_id)
+      setDatasetPath(res.data.saved_path ?? path)
+      setToast(`Dataset loaded successfully (id: ${res.data.dataset_id})`)
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? 'Failed to load data')
+    } finally {
+      setLoadingPath(false)
     }
   }
 
   const groups = data?.grouped_columns ?? {}
-  const debug = data?.debug ?? {}
+  const previewColumns = data?.preview?.length ? Object.keys(data.preview[0]) : []
 
   return (
     <div className="space-y-4">
       <section className="card space-y-3">
         <h2 className="text-lg font-semibold">Data</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <input className="input md:col-span-2" value={path} onChange={(e) => setPath(e.target.value)} placeholder="/path/to/dataset.parquet" />
+        {toast && <div className="text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2 text-sm">✅ {toast}</div>}
+        {error && <div className="text-red-700 bg-red-50 border border-red-200 rounded p-2 text-sm">❌ {error}</div>}
+
+        <div className="grid md:grid-cols-4 gap-3 items-end">
+          <div className="md:col-span-2">
+            <p className="label">Selected file</p>
+            <div className="input bg-slate-50">{selectedFile ? `${selectedFile.name} (${Math.round(selectedFile.size / 1024)} KB)` : 'No file selected'}</div>
+          </div>
           <select className="input" value={format} onChange={(e) => setFormat(e.target.value as any)}>
             <option value="auto">Auto</option>
             <option value="parquet">Parquet</option>
             <option value="csv">CSV</option>
           </select>
+          <div className="flex gap-2">
+            <input ref={fileRef} type="file" accept=".parquet,.csv" className="hidden" onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)} />
+            <button className="btn-secondary" onClick={() => fileRef.current?.click()}>Browse...</button>
+            <button className="btn" disabled={!selectedFile || loadingUpload} onClick={uploadProfile}>{loadingUpload ? 'Uploading...' : 'Upload + Profile'}</button>
+          </div>
         </div>
-        <button className="btn" onClick={load}>Load + Profile</button>
-        {error && <p className="text-red-600 text-sm">{error}</p>}
+
+        <details className="border rounded-lg p-3">
+          <summary className="font-medium cursor-pointer">Advanced: Load from server path</summary>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+            <input className="input md:col-span-2" value={path} onChange={(e) => setPath(e.target.value)} placeholder="C:\\data\\glass.parquet" />
+            <button className="btn" disabled={!path || loadingPath} onClick={loadFromPath}>{loadingPath ? 'Loading...' : 'Load + Profile'}</button>
+          </div>
+        </details>
+        <p className="text-xs text-slate-500">Current dataset id: {datasetId || 'none'}</p>
       </section>
 
       {data && (
         <>
           <section className="card space-y-3">
             <p className="font-medium">Rows: {data.rows} | Columns: {data.columns}</p>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+              <div className="border rounded-lg p-3"><p className="font-semibold">Rows</p><p>{data.rows}</p></div>
+              <div className="border rounded-lg p-3"><p className="font-semibold">Columns</p><p>{data.columns}</p></div>
               <div className="border rounded-lg p-3"><p className="font-semibold">Targets</p><p>{groups.targets?.length ?? 0}</p></div>
               <div className="border rounded-lg p-3"><p className="font-semibold">Control knobs</p><p>{groups.control_knobs?.length ?? 0}</p></div>
               <div className="border rounded-lg p-3"><p className="font-semibold">Context numeric</p><p>{groups.context_numeric?.length ?? 0}</p></div>
               <div className="border rounded-lg p-3"><p className="font-semibold">Context categorical</p><p>{groups.context_categorical?.length ?? 0}</p></div>
             </div>
-
-            <div className="grid md:grid-cols-2 gap-3">
-              <div className="border rounded-lg p-3 space-y-1">
-                <p className="font-semibold">Power knobs ({groups.power?.length ?? 0})</p>
-                <p className="text-xs text-slate-600">{(groups.power ?? []).slice(0, 10).join(', ') || 'None'}</p>
-                {(groups.power?.length ?? 0) === 0 && <InlineWarn title="No power knobs matched" examples={debug.columns_containing_pwr ?? []} />}
-              </div>
-              <div className="border rounded-lg p-3 space-y-1">
-                <p className="font-semibold">Main gas knobs ({groups.main_gas?.length ?? 0})</p>
-                <p className="text-xs text-slate-600">{(groups.main_gas ?? []).slice(0, 10).join(', ') || 'None'}</p>
-                {(groups.main_gas?.length ?? 0) === 0 && <InlineWarn title="No mainGas knobs matched" examples={debug.columns_containing_mainGas ?? []} />}
-              </div>
-              <div className="border rounded-lg p-3 space-y-1">
-                <p className="font-semibold">Segment gas knobs ({groups.segment_gas?.length ?? 0})</p>
-                <p className="text-xs text-slate-600">{(groups.segment_gas ?? []).slice(0, 10).join(', ') || 'None'}</p>
-                {(groups.segment_gas?.length ?? 0) === 0 && <InlineWarn title="No segment gas knobs matched" examples={debug.columns_containing_s1g ?? []} />}
-              </div>
-              <div className="border rounded-lg p-3 space-y-1">
-                <p className="font-semibold">m*g knobs ({groups.main_gas_alt?.length ?? 0})</p>
-                <p className="text-xs text-slate-600">{(groups.main_gas_alt ?? []).slice(0, 10).join(', ') || 'None'}</p>
-              </div>
-            </div>
-
-            {!!debug.warnings?.length && (
-              <div className="border border-amber-300 bg-amber-50 rounded p-2 text-amber-800 text-xs">
-                {debug.warnings.map((w, i) => <p key={i}>⚠️ {w}</p>)}
-              </div>
-            )}
-
-            <div className="border rounded-lg p-3">
-              <p className="font-semibold">Keyword-forced context columns ({groups.keyword_forced_context?.length ?? 0})</p>
-              <p className="text-xs text-slate-600 mt-1 break-all">{(groups.keyword_forced_context ?? []).join(', ') || 'None'}</p>
-            </div>
-
-            <details className="border rounded-lg p-3">
-              <summary className="font-semibold cursor-pointer">Debug knob detection</summary>
-              <p className="text-xs mt-2">total_cols: {debug.total_cols ?? 0}</p>
-              <pre className="text-xs overflow-auto mt-2">{JSON.stringify(debug, null, 2)}</pre>
-            </details>
           </section>
 
           <section className="card overflow-auto">
             <h3 className="font-semibold mb-2">Preview (first 20 rows)</h3>
-            <pre className="text-xs">{JSON.stringify(data.preview, null, 2)}</pre>
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="border-b bg-slate-50">{previewColumns.map((c) => <th key={c} className="text-left p-2 whitespace-nowrap">{c}</th>)}</tr>
+              </thead>
+              <tbody>
+                {data.preview.map((row, idx) => (
+                  <tr key={idx} className="border-b">
+                    {previewColumns.map((c) => <td key={c} className="p-2 whitespace-nowrap">{String((row as any)[c] ?? '')}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </section>
         </>
       )}

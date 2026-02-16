@@ -74,7 +74,7 @@ def build_knob_debug(columns: list[str], control: dict[str, list[str]]) -> dict[
     }
 
 
-def detect_groups(df: pd.DataFrame, include_main_gas_alt: bool = True, include_keyword_allowlist: bool = True) -> dict[str, list[str] | dict[str, object]]:
+def detect_groups(df: pd.DataFrame, include_main_gas_alt: bool = True, include_keyword_allowlist: bool = True, include_debug: bool = False) -> dict[str, list[str] | dict[str, object]]:
     columns = list(df.columns)
     control = detect_control_knobs(columns, include_main_gas_alt=include_main_gas_alt)
     control_all = set(sum(control.values(), []))
@@ -115,7 +115,7 @@ def detect_groups(df: pd.DataFrame, include_main_gas_alt: bool = True, include_k
         "context_categorical": categorical,
         "keyword_forced_context": forced,
         "identity": [c for c in IDENTITY_COLUMNS if c in columns],
-        "knob_debug": build_knob_debug(columns, control),
+        "knob_debug": build_knob_debug(columns, control) if include_debug else {},
     }
 
 
