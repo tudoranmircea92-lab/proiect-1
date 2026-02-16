@@ -59,11 +59,11 @@ def data_load(payload: LoadDataRequest):
 
     def work():
         dataset_id, _ = repo.load(payload.path, payload.format)
-        payload = repo.profile(dataset_id)
-        bad = count_non_finite(payload)
+        profile = repo.profile(dataset_id)
+        bad = count_non_finite(profile)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug('data/load non-finite count=%s', bad)
-        return sanitize_jsonable(payload)
+        return sanitize_jsonable(profile)
 
     jobs.run_async(job_id, lambda: _job(work, [(10, 'Preparing load'), (35, 'Reading file'), (60, 'Profiling columns'), (85, 'Building preview'), (100, 'Done')])(job_id))
     return sanitize_jsonable({'job_id': job_id})
@@ -201,6 +201,14 @@ def predict(payload: PredictRequest):
 
     jobs.run_async(job_id, lambda: _job(work, [(15, 'Fetching baseline'), (40, 'Building feature row'), (70, 'Predicting'), (100, 'Rendering results')])(job_id))
     return sanitize_jsonable({'job_id': job_id})
+
+
+
+
+@router.post('/predict_profile')
+def predict_profile(payload: PredictRequest):
+    # Backward-compatible alias for clients expecting /predict_profile.
+    return predict(payload)
 
 
 @router.post('/optimize')
