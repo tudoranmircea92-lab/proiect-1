@@ -11,6 +11,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.models.schemas import (
+    DataFilter,
     LoadDataRequest,
     OptimizeRequest,
     PlasmaStabilityRequest,
@@ -28,7 +29,7 @@ logger = logging.getLogger("app.api")
 router = APIRouter(prefix="/api")
 repo = DataRepository()
 trainer = TrainingService()
-optimizer = OptimizationService(trainer)
+optimizer = OptimizationService(trainer, repo)
 plasma = PlasmaStabilityService()
 jobs = JobService()
 
@@ -107,7 +108,7 @@ def train(payload: TrainRequest):
     job_id = jobs.create()
 
     def work():
-        result = trainer.train(repo.get(payload.dataset_id), payload.config, dataset_id=payload.dataset_id)
+        result = trainer.train(repo.get(payload.dataset_id), payload.config, dataset_id=payload.dataset_id, data_filter=payload.filter)
         return sanitize_jsonable(result)
 
     jobs.run_async(job_id, lambda: _job(work, [(10, 'Preparing dataset'), (30, 'Building feature matrix'), (55, 'Training model'), (80, 'Evaluating'), (95, 'Saving artifacts'), (100, 'Done')])(job_id))
@@ -119,7 +120,7 @@ def predict(payload: PredictRequest):
     job_id = jobs.create()
 
     def work():
-        _ = repo.get(payload.dataset_id)
+        _ = repo.apply_filter(repo.get(payload.dataset_id), payload.filter)
         return sanitize_jsonable({'predictions': trainer.predict(payload.control_knobs, payload.context)})
 
     jobs.run_async(job_id, lambda: _job(work, [(15, 'Preparing input'), (55, 'Running model'), (100, 'Done')])(job_id))
@@ -131,7 +132,8 @@ def optimize(payload: OptimizeRequest):
     job_id = jobs.create()
 
     def work():
-        return sanitize_jsonable({'solutions': optimizer.optimize(repo.get(payload.dataset_id), payload), 'method': payload.method})
+        result = optimizer.optimize(repo.get(payload.dataset_id), payload)
+        return sanitize_jsonable(result)
 
     jobs.run_async(job_id, lambda: _job(work, [(15, 'Preparing search'), (40, 'Running candidates'), (75, 'Scoring solutions'), (95, 'Building report'), (100, 'Done')])(job_id))
     return sanitize_jsonable({'job_id': job_id})
@@ -143,6 +145,7 @@ def plasma_stability(payload: PlasmaStabilityRequest):
 
     def work():
         df = repo.get(payload.dataset_id) if payload.dataset_id else repo.get()
+        df = repo.apply_filter(df, payload.filter)
         result = plasma.compute(payload, df)
         payload_out = {'summary': result.summary, 'per_cathode': result.per_cathode, 'timeseries': result.timeseries, 'mode_used': result.mode_used}
         bad = count_non_finite(payload_out)
@@ -182,6 +185,31 @@ def seed_plates(dataset_id: str, limit: int = 200):
     for _, row in df[display_cols + control_cols + context_cols].head(limit).iterrows():
         rows.append({'meta': {k: row.get(k, None) for k in display_cols}, 'control_knobs': {k: row.get(k, None) for k in control_cols}, 'context': {k: row.get(k, None) for k in context_cols}})
     return sanitize_jsonable({'rows': rows})
+
+
+@router.get('/filters/options')
+def filter_options(dataset_id: str):
+    df = repo.get(dataset_id)
+    prof = repo.profile(dataset_id)
+    return sanitize_jsonable({
+        'products': prof.get('products', []),
+        'thicknesses': prof.get('thicknesses', []),
+        'product_column': prof.get('product_column'),
+        'thickness_column': prof.get('thickness_column'),
+        'rows': len(df),
+    })
+
+
+@router.get('/plates')
+def plates(dataset_id: str, product: str | None = None, thickness: str | None = None, date_from: str | None = None, date_to: str | None = None, limit: int = 200):
+    filt = {'products': [product] if product else [], 'thicknesses': [thickness] if thickness else [], 'date_from': date_from, 'date_to': date_to}
+    rows = repo.plate_rows(dataset_id, filt=None if not any([product, thickness, date_from, date_to]) else DataFilter(**filt), limit=limit)
+    return sanitize_jsonable({'rows': rows})
+
+
+@router.get('/plate/{plate_id}/color')
+def plate_color(plate_id: str, dataset_id: str, device: str):
+    return sanitize_jsonable(repo.color_profile(dataset_id, plate_id, device))
 
 
 @router.get('/config/feature-regex')

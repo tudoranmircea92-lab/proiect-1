@@ -12,13 +12,13 @@ from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from app.core.constants import TARGET_COLUMNS
-from app.models.schemas import TrainConfig
+from app.models.schemas import DataFilter, TrainConfig
 from app.utils.feature_selector import select_features
 
 
@@ -88,10 +88,20 @@ class TrainingService:
             remainder="drop",
         )
 
-    def train(self, df: pd.DataFrame, config: TrainConfig, dataset_id: str = "") -> dict:
+    def train(self, df: pd.DataFrame, config: TrainConfig, dataset_id: str = "", data_filter: DataFilter | None = None) -> dict:
         missing_targets = [c for c in TARGET_COLUMNS if c not in df.columns]
         if missing_targets:
             raise ValueError(f"Missing required target columns: {missing_targets}")
+
+        if data_filter:
+            if data_filter.products:
+                pcol = next((c for c in df.columns if str(c).lower() in {"product", "product_name", "productcode", "recipe", "part"}), None)
+                if pcol:
+                    df = df[df[pcol].astype(str).isin({str(x) for x in data_filter.products})]
+            if data_filter.thicknesses:
+                tcol = next((c for c in df.columns if str(c).lower() in {"thickness", "glassthickness", "nominal_thickness"}), None)
+                if tcol:
+                    df = df[df[tcol].astype(str).isin({str(x) for x in data_filter.thicknesses})]
 
         selection = select_features(df, config.features)
         if not selection.selected_features:
@@ -114,9 +124,23 @@ class TrainingService:
             cut = int(len(X) * config.split.ratio)
             X_train, X_val = X.iloc[:cut], X.iloc[cut:]
             y_train, y_val = y.iloc[:cut], y.iloc[cut:]
+        elif config.split.method == "by_product":
+            product_col = next((c for c in train_df.columns if str(c).lower() in {"product", "product_name", "productcode", "recipe", "part"}), None)
+            if not product_col:
+                raise ValueError("by_product split selected but no product column found.")
+            groups = train_df[product_col].astype(str).fillna("unknown")
+            splitter = GroupShuffleSplit(n_splits=1, train_size=config.split.ratio, random_state=config.split.random_seed)
+            train_idx, val_idx = next(splitter.split(X, y, groups=groups))
+            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
         else:
+            stratify = None
+            if config.split.stratify_by_product:
+                product_col = next((c for c in train_df.columns if str(c).lower() in {"product", "product_name", "productcode", "recipe", "part"}), None)
+                if product_col:
+                    stratify = train_df[product_col].astype(str)
             X_train, X_val, y_train, y_val = train_test_split(
-                X, y, train_size=config.split.ratio, random_state=config.split.random_seed
+                X, y, train_size=config.split.ratio, random_state=config.split.random_seed, stratify=stratify
             )
 
         preprocessor = self._build_preprocessor(selection.control_knobs + selection.context_numeric, selection.context_categorical, config.estimator_type)

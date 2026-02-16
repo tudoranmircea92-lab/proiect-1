@@ -12,6 +12,8 @@ type LoadResp = {
   preview: Record<string, unknown>[]
   grouped_columns: Record<string, string[]>
   debug?: any
+  products?: string[]
+  thicknesses?: string[]
 }
 
 export function DataPage() {
@@ -25,7 +27,7 @@ export function DataPage() {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [stage, setStage] = useState('')
-  const { setDatasetId, setDatasetPath, setDatasetSummary, setDatasetName, setGroupedColumns, setModelTrained } = useDataset()
+  const { setDatasetId, setDatasetPath, setDatasetSummary, setDatasetName, setGroupedColumns, setProducts, setThicknesses, setGlobalFilters, setModelTrained } = useDataset()
 
   const onDone = (profile: LoadResp) => {
     setData(profile)
@@ -34,6 +36,11 @@ export function DataPage() {
     setDatasetSummary({ rows: profile.rows, columns: profile.columns })
     setDatasetName((profile.saved_path || selectedFile?.name || path || "dataset").split(/[\\/]/).pop() || "dataset")
     setGroupedColumns(profile.grouped_columns || null)
+    const products = (profile as any).products || []
+    const thicknesses = (profile as any).thicknesses || []
+    setProducts(products)
+    setThicknesses(thicknesses)
+    setGlobalFilters({ products: [], thicknesses: [], dateFrom: "", dateTo: "" })
     setModelTrained(false)
     setToast(`Loaded ${profile.rows} rows, ${profile.columns} columns. Detected knobs: pwr=${profile.grouped_columns.power?.length ?? 0}, mainGas=${profile.grouped_columns.main_gas?.length ?? 0}, segmentGas=${profile.grouped_columns.segment_gas?.length ?? 0}`)
   }

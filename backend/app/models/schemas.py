@@ -21,9 +21,17 @@ class FeatureToggleConfig(BaseModel):
 
 
 class SplitConfig(BaseModel):
-    method: Literal["time", "random"] = "time"
+    method: Literal["time", "random", "by_product"] = "time"
     ratio: float = Field(default=0.8, ge=0.5, le=0.95)
     random_seed: int = 42
+    stratify_by_product: bool = False
+
+
+class DataFilter(BaseModel):
+    products: list[str] = Field(default_factory=list)
+    thicknesses: list[str] = Field(default_factory=list)
+    date_from: str | None = None
+    date_to: str | None = None
 
 
 class TrainConfig(BaseModel):
@@ -41,18 +49,20 @@ class TrainConfig(BaseModel):
 class TrainRequest(BaseModel):
     dataset_id: str
     config: TrainConfig
+    filter: DataFilter | None = None
 
 
 class PredictRequest(BaseModel):
     dataset_id: str
     control_knobs: dict[str, float]
     context: dict[str, Any]
+    filter: DataFilter | None = None
 
 
 class DeviceTarget(BaseModel):
-    L: float
-    a: float
-    b: float
+    L: float | None = None
+    a: float | None = None
+    b: float | None = None
 
 
 class StdConstraints(BaseModel):
@@ -87,7 +97,18 @@ class OptimizeParams(BaseModel):
 
 class OptimizeRequest(BaseModel):
     dataset_id: str
-    targets: OptimizeTargets
+    plate_id: str | None = None
+    device: Literal["RG", "RF", "T"] = "RG"
+    metric_group: Literal["lab", "b_only"] = "b_only"
+    targets: DeviceTarget | OptimizeTargets
+    tolerances: DeviceTarget | None = None
+    tol_deltaE: float | None = None
+    baseline_source: Literal["actual", "nearest_neighbor", "median_product"] = "actual"
+    knob_groups: dict[str, bool] = Field(default_factory=lambda: {"power": True, "main_gas": True, "segment_gas": True})
+    active_threshold: float = 0.0
+    filter: DataFilter | None = None
+    lambda_knob_change: float = 0.2
+    lambda_smoothness: float = 0.1
     constraints: OptimizeConstraints | None = None
     method: Literal["nn", "search"] = "nn"
     bounds: OptimizeBounds = OptimizeBounds()
@@ -132,6 +153,7 @@ class PlasmaStabilityRequest(BaseModel):
         "uniformity_cv_current": 0.7,
     })
     show_inactive: bool = False
+    filter: DataFilter | None = None
 
 
 class PlasmaStabilityResponse(BaseModel):

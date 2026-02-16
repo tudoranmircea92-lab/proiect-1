@@ -20,11 +20,12 @@ function groupByCathode(cols: string[]) {
 }
 
 export function TrainPage() {
-  const { datasetId, datasetSummary, groupedColumns, datasetName, setModelTrained } = useDataset()
+  const { datasetId, datasetSummary, groupedColumns, datasetName, globalFilters, setModelTrained } = useDataset()
   const [models, setModels] = useState<string[]>([])
   const [estimatorType, setEstimatorType] = useState('hist_gradient_boosting')
   const [trainingMode, setTrainingMode] = useState<'fast' | 'balanced' | 'maximum_accuracy'>('balanced')
-  const [split, setSplit] = useState<'time' | 'random'>('time')
+  const [split, setSplit] = useState<'time' | 'random' | 'by_product'>('time')
+  const [stratifyByProduct, setStratifyByProduct] = useState(false)
   const [ratio, setRatio] = useState(0.8)
   const [seed, setSeed] = useState(42)
   const [toggles, setToggles] = useState({
@@ -85,10 +86,11 @@ export function TrainPage() {
         '/api/train',
         {
           dataset_id: datasetId,
+          filter: { products: globalFilters.products, thicknesses: globalFilters.thicknesses, date_from: globalFilters.dateFrom || null, date_to: globalFilters.dateTo || null },
           config: {
             estimator_type: estimatorType,
             training_mode: trainingMode,
-            split: { method: split, ratio, random_seed: seed },
+            split: { method: split, ratio, random_seed: seed, stratify_by_product: stratifyByProduct },
             features: toggles,
           },
         },
@@ -199,6 +201,7 @@ export function TrainPage() {
             <Select value={split} onChange={(e: any) => setSplit(e.target.value)} disabled={loading}>
               <option value="time">time</option>
               <option value="random">random</option>
+              <option value="by_product">by_product</option>
             </Select>
           </div>
           <div className="space-y-2">
@@ -208,6 +211,10 @@ export function TrainPage() {
           <div className="space-y-2">
             <label className="text-sm">Random seed</label>
             <Input type="number" value={seed} onChange={(e: any) => setSeed(Number(e.target.value))} disabled={loading} />
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span>Stratify by product (random split)</span>
+            <Switch checked={stratifyByProduct} onCheckedChange={(v:boolean)=>setStratifyByProduct(v)} />
           </div>
         </Card>
 

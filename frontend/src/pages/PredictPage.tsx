@@ -14,7 +14,7 @@ export function PredictPage() {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [stage, setStage] = useState('')
-  const { datasetId } = useDataset()
+  const { datasetId, globalFilters } = useDataset()
 
   useEffect(() => { if (datasetId) api.get(`/api/data/seed-plates?dataset_id=${datasetId}`).then(r => setSeedRows(r.data.rows || [])) }, [datasetId])
 
@@ -22,7 +22,7 @@ export function PredictPage() {
     if (!datasetId) { setError('Load data first'); return }
     setLoading(true); setError('')
     try {
-      const res = await runJob('/api/predict', { dataset_id: datasetId, control_knobs: controlKnobs, context }, ({progress, stage})=>{setProgress(progress); setStage(stage)})
+      const res = await runJob('/api/predict', { dataset_id: datasetId, control_knobs: controlKnobs, context, filter: { products: globalFilters.products, thicknesses: globalFilters.thicknesses, date_from: globalFilters.dateFrom || null, date_to: globalFilters.dateTo || null } }, ({progress, stage})=>{setProgress(progress); setStage(stage)})
       setPred(res.predictions)
     } catch (e:any) { setError(e.message) } finally { setLoading(false) }
   }

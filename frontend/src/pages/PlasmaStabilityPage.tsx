@@ -6,7 +6,7 @@ import { useDataset } from '../lib/datasetContext'
 import { runJob } from '../lib/jobs'
 
 export function PlasmaStabilityPage() {
-  const { datasetId } = useDataset()
+  const { datasetId, globalFilters } = useDataset()
   const [dateFrom, setDateFrom] = useState('2024-01-01')
   const [dateTo, setDateTo] = useState('2024-12-31')
   const [threshold, setThreshold] = useState(0)
@@ -21,7 +21,7 @@ export function PlasmaStabilityPage() {
     if (!datasetId) { setError('Load data first'); return }
     setLoading(true); setError('')
     try {
-      const res = await runJob('/api/plasma_stability', { dataset_id: datasetId, mode:'auto', date_from: dateFrom, date_to: dateTo, active_threshold: threshold, agg }, ({progress, stage})=>{setProgress(progress); setStage(stage)})
+      const res = await runJob('/api/plasma_stability', { dataset_id: datasetId, mode:'auto', date_from: dateFrom, date_to: dateTo, active_threshold: threshold, agg, filter: { products: globalFilters.products, thicknesses: globalFilters.thicknesses, date_from: globalFilters.dateFrom || null, date_to: globalFilters.dateTo || null } }, ({progress, stage})=>{setProgress(progress); setStage(stage)})
       setResult(res)
     } catch (e:any) { setError(e.message) } finally { setLoading(false) }
   }
