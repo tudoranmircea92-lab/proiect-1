@@ -2,7 +2,7 @@ import { Download, Play } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Accordion, Alert, Badge, Button, Card, Input, Progress, Select, Skeleton } from '../components/ui'
-import { api } from '../lib/api'
+import { API_BASE, api, resolveApiUrl } from '../lib/api'
 import { useDataset } from '../lib/datasetContext'
 import { waitForJob } from '../lib/jobs'
 
@@ -19,6 +19,8 @@ function level(score: number | null | undefined) {
   return { label: 'Bad', cls: 'bg-red-100 text-red-700' }
 }
 
+let healthLogOnce = false
+
 export function PlasmaStabilityPage() {
   const { datasetId, globalFilters } = useDataset()
   const now = new Date()
@@ -34,23 +36,39 @@ export function PlasmaStabilityPage() {
   const [errorObj, setErrorObj] = useState<any>(null)
   const [plasmaReady, setPlasmaReady] = useState(true)
   const [healthMsg, setHealthMsg] = useState('')
+  const [healthErrorDetails, setHealthErrorDetails] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [stage, setStage] = useState('')
 
-
   useEffect(() => {
     let mounted = true
-    api.get('/api/plasma/health').then(() => {
+    const healthPath = '/api/plasma/health'
+    const finalUrl = resolveApiUrl(healthPath)
+
+    if (!healthLogOnce && (import.meta as any)?.env?.DEV) {
+      // one-time local diagnostics for plasma wiring
+      console.log('[plasma health] url=', finalUrl)
+      console.log('[plasma health] base=', API_BASE)
+      healthLogOnce = true
+    }
+
+    api.get(healthPath).then(() => {
       if (!mounted) return
       setPlasmaReady(true)
       setHealthMsg('')
+      setHealthErrorDetails(null)
     }).catch((e: any) => {
       if (!mounted) return
       setPlasmaReady(false)
       const status = e?.response?.status
       const detail = e?.response?.data?.detail
-      setHealthMsg(`Plasma backend not available. Check that /api/plasma is mounted. Open /docs and confirm plasma endpoints exist. ${status ? `(status ${status})` : ''} ${detail ? `- ${JSON.stringify(detail)}` : ''}`)
+      setHealthMsg(`Plasma backend not available. Check that /api/plasma is mounted. Open /docs and confirm plasma endpoints exist. ${status ? `(status ${status})` : ''}`)
+      setHealthErrorDetails({
+        status: status ?? null,
+        url: (e?.config as any)?.__finalUrl || finalUrl,
+        response: e?.response?.data ?? { detail: detail || e?.message || 'Unknown error' },
+      })
     })
     return () => { mounted = false }
   }, [datasetId])
@@ -99,7 +117,7 @@ export function PlasmaStabilityPage() {
       }
     } catch (e: any) {
       const status = e?.response?.status ?? null
-      const url = `${e?.config?.baseURL || ''}${e?.config?.url || '/api/plasma/stability'}`
+      const url = (e?.config as any)?.__finalUrl || `${e?.config?.baseURL || ''}${e?.config?.url || '/api/plasma/stability'}`
       const response = e?.response?.data ?? null
       const detail = (typeof response?.detail === 'string' ? response.detail : e?.message) || 'Unknown error'
       setErrorObj({
@@ -147,7 +165,7 @@ export function PlasmaStabilityPage() {
       setErrorObj({
         detail: 'Export failed',
         status: e?.response?.status ?? null,
-        url: `${e?.config?.baseURL || ''}${e?.config?.url || '/api/plasma/export_csv'}`,
+        url: (e?.config as any)?.__finalUrl || `${e?.config?.baseURL || ''}${e?.config?.url || '/api/plasma/export_csv'}`,
         response: e?.response?.data ?? e?.message,
       })
     }
@@ -166,7 +184,16 @@ export function PlasmaStabilityPage() {
         <div className='flex gap-2'><Button onClick={run} disabled={!datasetId || loading || !plasmaReady}><Play size={16} className='inline mr-1' />Run</Button><Button variant='secondary' onClick={exportCsv} disabled={!result}><Download size={16} className='inline mr-1' />Export CSV</Button></div>
       </div>
 
-      {!plasmaReady && <Alert variant='destructive'>{healthMsg}</Alert>}
+      {!plasmaReady && <Alert variant='destructive'>
+        <p>{healthMsg}</p>
+        <Accordion title='Show details'>
+          <div className='text-xs space-y-1'>
+            <p>Status: {healthErrorDetails?.status ?? '—'}</p>
+            <p>URL: {healthErrorDetails?.url ?? resolveApiUrl('/api/plasma/health')}</p>
+            <pre className='overflow-auto'>{JSON.stringify(healthErrorDetails?.response ?? {}, null, 2)}</pre>
+          </div>
+        </Accordion>
+      </Alert>}
 
       <Accordion title='How this score is computed'>
         <div className='grid md:grid-cols-2 gap-3 text-sm'>
