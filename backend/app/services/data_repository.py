@@ -169,7 +169,7 @@ class DataRepository:
             if not m:
                 continue
             cid = f"c{int(m.group(1))}"
-            cathodes.setdefault(cid, {'id': cid, 'on_col': None, 'power_cols': []})
+            cathodes.setdefault(cid, {'id': cid, 'on_col': None, 'power_cols': [], 'on': None, 'power_col': None, 'power_current': None, 'limits': {}})
             if re.search(r'\.on$', n) or re.search(r'\.status$', n):
                 if cathodes[cid]['on_col'] is None:
                     cathodes[cid]['on_col'] = c
@@ -232,6 +232,32 @@ class DataRepository:
                 mode = 'by_segment'
                 entities = sorted(by_seg.keys(), key=lambda x: int(''.join(ch for ch in x if ch.isdigit()) or 10**9))
                 seg_map = {e: by_seg[e] for e in entities}
+
+        if row is not None:
+            for cid, item in cathodes.items():
+                # infer ON
+                onv = None
+                if item.get('on_col'):
+                    v = pd.to_numeric(row.get(item['on_col']), errors='coerce')
+                    onv = bool(pd.notna(v) and float(v) > 0)
+                if onv is None:
+                    # fallback from power/current
+                    pcol = next((pc for pc in item.get('power_cols', []) if pd.notna(pd.to_numeric(row.get(pc), errors='coerce'))), None)
+                    if pcol:
+                        pv = pd.to_numeric(row.get(pcol), errors='coerce')
+                        onv = bool(pd.notna(pv) and float(pv) > 0)
+                item['on'] = bool(onv) if onv is not None else False
+
+                pcol = item.get('power_cols', [None])[0] if item.get('power_cols') else None
+                if pcol:
+                    item['power_col'] = pcol
+                    pv = pd.to_numeric(row.get(pcol), errors='coerce')
+                    item['power_current'] = float(pv) if pd.notna(pv) else 0.0
+                    sers = pd.to_numeric(df[pcol], errors='coerce').dropna()
+                    if not sers.empty:
+                        item['limits'] = {'min': float(sers.quantile(0.05)), 'max': float(sers.quantile(0.95))}
+                    else:
+                        item['limits'] = {'min': 0.0, 'max': 0.0}
 
         cathode_list = sorted(cathodes.values(), key=lambda x: int(x['id'][1:]) if x['id'][1:].isdigit() else 10**9)
         return {

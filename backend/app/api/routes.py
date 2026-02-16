@@ -277,6 +277,11 @@ def optimize_context(dataset_id: str, plate_id: str | None = None, product: str 
         try:
             baseline = repo.plate_baseline(dataset_id, plate_id, trainer.feature_schema.get('control_knobs', []), filt=filt)
             out['baseline'] = baseline
+            rg = baseline.get('actual_color', {}).get('RG', {})
+            out['actual_profiles'] = {
+                'a': rg.get('a_points') or [rg.get('a_mean')] * 9 if rg.get('a_mean') is not None else [],
+                'b': rg.get('b_points') or [rg.get('b_mean')] * 9 if rg.get('b_mean') is not None else [],
+            }
         except Exception:
             pass
 

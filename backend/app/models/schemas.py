@@ -103,6 +103,50 @@ class OptimizeParams(BaseModel):
     device_weights: dict[str, float] = Field(default_factory=lambda: {"RG": 1.0, "RF": 1.0, "T": 1.0})
 
 
+
+
+class UniformitySpecRange(BaseModel):
+    min: float
+    max: float
+
+
+class UniformitySpec(BaseModel):
+    a_rg: UniformitySpecRange = UniformitySpecRange(min=2.0, max=6.0)
+    b_rg: UniformitySpecRange = UniformitySpecRange(min=-4.0, max=0.0)
+
+
+class UniformityObjective(BaseModel):
+    w_std_a: float = 1.0
+    w_std_b: float = 1.0
+    w_range_a: float = 1.0
+    w_range_b: float = 1.0
+    w_smoothness: float = 0.1
+    w_delta: float = 0.2
+
+
+class OptimizeStage(BaseModel):
+    name: str
+    enabled: bool = True
+
+
+class OptimizeStrategy(BaseModel):
+    gas_coupling: Literal["segmented_only", "main_plus_scale_segmented"] = "segmented_only"
+    stages: list[OptimizeStage] = Field(default_factory=lambda: [
+        OptimizeStage(name="segmented_gases", enabled=True),
+        OptimizeStage(name="cathode_power", enabled=True),
+        OptimizeStage(name="main_gases", enabled=False),
+    ])
+
+
+class RobustnessConfig(BaseModel):
+    enabled: bool = False
+    jitter_pct: float = 1.0
+    n_simulations: int = Field(default=200, ge=1, le=5000)
+
+
+class GuardrailsConfig(BaseModel):
+    max_total_change: float | None = None
+
 class OptimizeRequest(BaseModel):
     dataset_id: str
     plate_id: str | None = None
@@ -119,12 +163,18 @@ class OptimizeRequest(BaseModel):
     lambda_smoothness: float = 0.1
     constraints: OptimizeConstraints | None = None
     method: Literal["nn", "search"] = "nn"
+    mode: Literal["target", "uniformity_in_spec"] = "target"
     bounds: OptimizeBounds = OptimizeBounds()
     params: OptimizeParams = OptimizeParams()
     seed_plate: str | None = None
     seed_control_knobs: dict[str, float] | None = None
     seed_context: dict[str, Any] | None = None
     knobs: dict[str, Any] | None = None
+    spec: UniformitySpec = UniformitySpec()
+    objective: UniformityObjective = UniformityObjective()
+    strategy: OptimizeStrategy = OptimizeStrategy()
+    robustness: RobustnessConfig = RobustnessConfig()
+    guardrails: GuardrailsConfig = GuardrailsConfig()
 
 
 class Solution(BaseModel):

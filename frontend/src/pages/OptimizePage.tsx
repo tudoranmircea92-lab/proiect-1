@@ -1,6 +1,6 @@
-import { Download, Play } from 'lucide-react'
+import { Copy, Download, Play, Save } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts'
+import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts'
 import { Alert, Badge, Button, Card, Input, Progress, Select, Skeleton } from '../components/ui'
 import { api } from '../lib/api'
 import { useDataset } from '../lib/datasetContext'
@@ -8,8 +8,15 @@ import { runJob } from '../lib/jobs'
 
 type PlateRow = { plate: string; ts?: string; product?: string; thickness?: string }
 type KnobSpec = { current: number; min: number; max: number; max_step: number }
+type SavedRun = { id: string; ts: string; plateId: string; product?: string; inSpec?: boolean; score?: number; result: any; payload: any }
 
 const empty = { L: 0, a: 0, b: 0 }
+
+function pct(before: number, after: number) {
+  const b = Number(before || 0)
+  if (Math.abs(b) < 1e-9) return '—'
+  return `${(((after - b) / b) * 100).toFixed(1)}%`
+}
 
 export function OptimizePage() {
   const { datasetId, globalFilters } = useDataset()
@@ -17,24 +24,49 @@ export function OptimizePage() {
   const [search, setSearch] = useState('')
   const [plateId, setPlateId] = useState('')
   const [device, setDevice] = useState<'RG' | 'RF' | 'T'>('RG')
+  const [mode, setMode] = useState<'target' | 'uniformity_in_spec'>('uniformity_in_spec')
   const [metricGroup, setMetricGroup] = useState<'lab' | 'b_only'>('b_only')
   const [baselineSource, setBaselineSource] = useState<'actual' | 'nearest_neighbor' | 'median_product'>('actual')
   const [target, setTarget] = useState({ ...empty })
   const [tol, setTol] = useState({ ...empty })
   const [tolDeltaE, setTolDeltaE] = useState<number | ''>('')
-  const [channel, setChannel] = useState<'L' | 'a' | 'b'>('b')
   const [activeThreshold, setActiveThreshold] = useState(0)
   const [lambdaKnob, setLambdaKnob] = useState(0.2)
   const [lambdaSmooth, setLambdaSmooth] = useState(0.1)
+  const [wStdA, setWStdA] = useState(1)
+  const [wStdB, setWStdB] = useState(1)
+  const [wRangeA, setWRangeA] = useState(1)
+  const [wRangeB, setWRangeB] = useState(1)
+  const [wSmoothness, setWSmoothness] = useState(0.1)
+  const [wDelta, setWDelta] = useState(0.2)
+  const [robEnabled, setRobEnabled] = useState(true)
+  const [robJitter, setRobJitter] = useState(1)
+  const [robN, setRobN] = useState(200)
+  const [maxTotalChange, setMaxTotalChange] = useState<number | ''>('')
+  const [stgSeg, setStgSeg] = useState(true)
+  const [stgPower, setStgPower] = useState(true)
+  const [stgMain, setStgMain] = useState(false)
+
   const [actual, setActual] = useState<any>(null)
   const [baseline, setBaseline] = useState<any>(null)
   const [knobSchema, setKnobSchema] = useState<any>(null)
   const [logicalKnobs, setLogicalKnobs] = useState<any>({ gases_main: {}, gases_segmented: {} })
   const [result, setResult] = useState<any>(null)
+  const [history, setHistory] = useState<SavedRun[]>([])
+  const [compareIds, setCompareIds] = useState<string[]>([])
+  const [saveAnyway, setSaveAnyway] = useState(false)
+
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [stage, setStage] = useState('')
+
+  useEffect(() => {
+    const raw = localStorage.getItem('optimize_history')
+    if (raw) {
+      try { setHistory(JSON.parse(raw)) } catch { /* noop */ }
+    }
+  }, [])
 
   useEffect(() => {
     if (!datasetId) return
@@ -73,7 +105,6 @@ export function OptimizePage() {
       })
 
       const segmented: any = {}
-      const mode = ks?.gases_segmented?.mode
       ;(ks?.gases_segmented?.entities || []).forEach((entity: string) => {
         segmented[entity] = {}
         ;['main1', 'main2', 'main3'].forEach((k) => {
@@ -82,7 +113,7 @@ export function OptimizePage() {
         })
       })
 
-      setLogicalKnobs({ gases_main: main, gases_segmented: segmented, segmented_mode: mode || 'none' })
+      setLogicalKnobs({ gases_main: main, gases_segmented: segmented, segmented_mode: ks?.gases_segmented?.mode || 'none' })
     }).catch(() => {
       setKnobSchema(null)
       setBaseline(null)
@@ -92,49 +123,76 @@ export function OptimizePage() {
 
   const filteredPlates = useMemo(() => plates.filter((p) => `${p.plate} ${p.product || ''} ${p.ts || ''} ${p.thickness || ''}`.toLowerCase().includes(search.toLowerCase())), [plates, search])
 
+  const buildPayload = () => ({
+    dataset_id: datasetId,
+    plate_id: plateId,
+    device,
+    mode,
+    metric_group: metricGroup,
+    baseline_source: baselineSource,
+    targets: target,
+    tolerances: tol,
+    tol_deltaE: tolDeltaE === '' ? null : Number(tolDeltaE),
+    active_threshold: activeThreshold,
+    knob_groups: { power: true, main_gas: true, segment_gas: true },
+    knobs: logicalKnobs,
+    lambda_knob_change: lambdaKnob,
+    lambda_smoothness: lambdaSmooth,
+    method: 'search',
+    params: { k_neighbors: 5, n_iterations: 400, n_solutions: 1, device_weights: { RG: 1, RF: 1, T: 1 } },
+    bounds: { pwr_pct: 8, gas_pct: 8 },
+    filter: { products: globalFilters.products, thicknesses: globalFilters.thicknesses, date_from: globalFilters.dateFrom || null, date_to: globalFilters.dateTo || null },
+    spec: { a_rg: { min: 2, max: 6 }, b_rg: { min: -4, max: 0 } },
+    objective: { w_std_a: wStdA, w_std_b: wStdB, w_range_a: wRangeA, w_range_b: wRangeB, w_smoothness: wSmoothness, w_delta: wDelta },
+    strategy: {
+      gas_coupling: 'segmented_only',
+      stages: [
+        { name: 'segmented_gases', enabled: stgSeg },
+        { name: 'cathode_power', enabled: stgPower },
+        { name: 'main_gases', enabled: stgMain },
+      ],
+    },
+    robustness: { enabled: robEnabled, jitter_pct: robJitter, n_simulations: robN },
+    guardrails: { max_total_change: maxTotalChange === '' ? null : Number(maxTotalChange) },
+  })
+
   const run = async () => {
     if (!datasetId || !plateId) { setError('Select plate and dataset first'); return }
     setLoading(true); setError('')
     try {
-      const payload = {
-        dataset_id: datasetId,
-        plate_id: plateId,
-        device,
-        metric_group: metricGroup,
-        baseline_source: baselineSource,
-        targets: target,
-        tolerances: tol,
-        tol_deltaE: tolDeltaE === '' ? null : Number(tolDeltaE),
-        active_threshold: activeThreshold,
-        knob_groups: { power: true, main_gas: true, segment_gas: true },
-        knobs: logicalKnobs,
-        lambda_knob_change: lambdaKnob,
-        lambda_smoothness: lambdaSmooth,
-        method: 'search',
-        params: { k_neighbors: 5, n_iterations: 400, n_solutions: 1, device_weights: { RG: 1, RF: 1, T: 1 } },
-        bounds: { pwr_pct: 8, gas_pct: 8 },
-        filter: { products: globalFilters.products, thicknesses: globalFilters.thicknesses, date_from: globalFilters.dateFrom || null, date_to: globalFilters.dateTo || null },
-      }
+      const payload = buildPayload()
       const res = await runJob('/api/optimize', payload, ({ progress, stage }) => { setProgress(progress); setStage(stage) })
       setResult(res)
     } catch (e: any) { setError(e.message || 'Optimization failed') } finally { setLoading(false) }
   }
 
-  const chartRows = useMemo(() => {
-    const pts = actual?.[`${channel}_points`] || []
-    const mean = actual?.[`${channel}_mean`]
-    const before = result?.baseline_pred?.[channel]
-    const after = result?.optimized_pred?.[channel]
-    if (pts.length) {
-      return pts.map((v: number, i: number) => ({ pos: `p${i + 1}`, actual: v, mean, pred_before: before, pred_after: after }))
+  const saveRun = () => {
+    if (!result) return
+    if (!result?.validity?.in_spec && !saveAnyway) return
+    const run: SavedRun = {
+      id: `${Date.now()}`,
+      ts: new Date().toISOString(),
+      plateId,
+      product: globalFilters.products[0] || '',
+      inSpec: !!result?.validity?.in_spec,
+      score: result?.meta?.best_score,
+      result,
+      payload: buildPayload(),
     }
-    return [{ pos: 'mean', actual: mean, mean, pred_before: before, pred_after: after }]
-  }, [actual, result, channel])
+    const next = [run, ...history].slice(0, 20)
+    setHistory(next)
+    localStorage.setItem('optimize_history', JSON.stringify(next))
+  }
+
+  const copyDeltas = async () => {
+    const txt = JSON.stringify(result?.recommendation || result?.knob_changes || {}, null, 2)
+    await navigator.clipboard.writeText(txt)
+  }
 
   const exportJson = () => {
     if (!result) return
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }))
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ payload: buildPayload(), result }, null, 2)], { type: 'application/json' }))
     a.download = 'optimization_report.json'
     a.click()
   }
@@ -166,11 +224,54 @@ export function OptimizePage() {
     })
   }
 
+  const aRows = useMemo(() => {
+    const b = result?.before?.profiles?.a || actual?.a_points || []
+    const p = result?.after?.profiles_pred?.a || []
+    const cmp = compareIds.map((id) => history.find((h) => h.id === id)?.result?.after?.profiles_pred?.a || [])
+    return (b || []).map((v: number, i: number) => ({
+      pos: `p${i + 1}`,
+      actual: v,
+      predicted: p[i],
+      c1: cmp[0]?.[i],
+      c2: cmp[1]?.[i],
+      low: 2,
+      high: 6,
+    }))
+  }, [result, actual, compareIds, history])
+
+  const bRows = useMemo(() => {
+    const b = result?.before?.profiles?.b || actual?.b_points || []
+    const p = result?.after?.profiles_pred?.b || []
+    const cmp = compareIds.map((id) => history.find((h) => h.id === id)?.result?.after?.profiles_pred?.b || [])
+    return (b || []).map((v: number, i: number) => ({
+      pos: `p${i + 1}`,
+      actual: v,
+      predicted: p[i],
+      c1: cmp[0]?.[i],
+      c2: cmp[1]?.[i],
+      low: -4,
+      high: 0,
+    }))
+  }, [result, actual, compareIds, history])
+
+  const domain = result?.domain_score?.label || 'in_domain'
+
   return <div className='space-y-6'>
     {!datasetId && <Alert variant='destructive'>Load data first.</Alert>}
 
     <Card className='space-y-3'>
-      <h3 className='text-sm font-medium tracking-tight'>1) Selection</h3>
+      <div className='flex items-center justify-between'>
+        <h3 className='text-sm font-medium tracking-tight'>Optimize</h3>
+        <div className='flex items-center gap-2'>
+          <span className='text-xs text-slate-500'>Mode</span>
+          <Select value={mode} onChange={(e: any) => setMode(e.target.value)}>
+            <option value='target'>Hit Target</option>
+            <option value='uniformity_in_spec'>Improve Uniformity (in-spec)</option>
+          </Select>
+          {mode === 'uniformity_in_spec' && <Badge className='bg-red-100 text-red-700'>Hard constraints ON</Badge>}
+        </div>
+      </div>
+      {mode === 'uniformity_in_spec' && <Alert>a:[2,6], b:[-4,0] per position (RG profile)</Alert>}
       <div className='grid md:grid-cols-2 gap-3'>
         <div>
           <label className='text-sm'>Plate</label>
@@ -190,133 +291,156 @@ export function OptimizePage() {
     </Card>
 
     <Card className='space-y-3'>
-      <h3 className='text-sm font-medium tracking-tight'>2) Targets + tolerances</h3>
-      <div className='grid md:grid-cols-3 gap-2'>
-        <div><label className='text-sm'>Target L</label><Input type='number' value={target.L} onChange={(e: any) => setTarget((p) => ({ ...p, L: Number(e.target.value) }))} /></div>
-        <div><label className='text-sm'>Target a</label><Input type='number' value={target.a} onChange={(e: any) => setTarget((p) => ({ ...p, a: Number(e.target.value) }))} /></div>
-        <div><label className='text-sm'>Target b</label><Input type='number' value={target.b} onChange={(e: any) => setTarget((p) => ({ ...p, b: Number(e.target.value) }))} /></div>
-      </div>
+      <h3 className='text-sm font-medium tracking-tight'>Objective + guardrails</h3>
       <div className='grid md:grid-cols-4 gap-2'>
-        <div><label className='text-sm'>tol_L</label><Input type='number' value={tol.L} onChange={(e: any) => setTol((p) => ({ ...p, L: Number(e.target.value) }))} /></div>
-        <div><label className='text-sm'>tol_a</label><Input type='number' value={tol.a} onChange={(e: any) => setTol((p) => ({ ...p, a: Number(e.target.value) }))} /></div>
-        <div><label className='text-sm'>tol_b</label><Input type='number' value={tol.b} onChange={(e: any) => setTol((p) => ({ ...p, b: Number(e.target.value) }))} /></div>
-        <div><label className='text-sm'>tol_deltaE (optional)</label><Input type='number' value={tolDeltaE} onChange={(e: any) => setTolDeltaE(e.target.value === '' ? '' : Number(e.target.value))} /></div>
+        <div><label className='text-xs'>w_std_a</label><Input type='number' value={wStdA} onChange={(e: any) => setWStdA(Number(e.target.value))} /></div>
+        <div><label className='text-xs'>w_std_b</label><Input type='number' value={wStdB} onChange={(e: any) => setWStdB(Number(e.target.value))} /></div>
+        <div><label className='text-xs'>w_range_a</label><Input type='number' value={wRangeA} onChange={(e: any) => setWRangeA(Number(e.target.value))} /></div>
+        <div><label className='text-xs'>w_range_b</label><Input type='number' value={wRangeB} onChange={(e: any) => setWRangeB(Number(e.target.value))} /></div>
+        <div><label className='text-xs'>w_smoothness</label><Input type='number' value={wSmoothness} onChange={(e: any) => setWSmoothness(Number(e.target.value))} /></div>
+        <div><label className='text-xs'>w_delta</label><Input type='number' value={wDelta} onChange={(e: any) => setWDelta(Number(e.target.value))} /></div>
+        <div><label className='text-xs'>max_total_change</label><Input type='number' value={maxTotalChange} onChange={(e: any) => setMaxTotalChange(e.target.value === '' ? '' : Number(e.target.value))} /></div>
       </div>
       <div className='grid md:grid-cols-3 gap-2'>
-        <div className='text-sm border rounded p-2'>Actual L: {actual?.L_mean ?? '—'}</div>
-        <div className='text-sm border rounded p-2'>Actual a: {actual?.a_mean ?? '—'}</div>
-        <div className='text-sm border rounded p-2'>Actual b: {actual?.b_mean ?? '—'}</div>
+        <label className='text-sm'><input type='checkbox' checked={stgSeg} onChange={(e) => setStgSeg(e.target.checked)} /> Stage 1 segmented gases</label>
+        <label className='text-sm'><input type='checkbox' checked={stgPower} onChange={(e) => setStgPower(e.target.checked)} /> Stage 2 cathode power</label>
+        <label className='text-sm'><input type='checkbox' checked={stgMain} onChange={(e) => setStgMain(e.target.checked)} /> Stage 3 main gases</label>
+      </div>
+      <div className='grid md:grid-cols-3 gap-2'>
+        <label className='text-sm'><input type='checkbox' checked={robEnabled} onChange={(e) => setRobEnabled(e.target.checked)} /> Robustness check</label>
+        <div><label className='text-xs'>jitter %</label><Input type='number' value={robJitter} onChange={(e: any) => setRobJitter(Number(e.target.value))} /></div>
+        <div><label className='text-xs'>n simulations</label><Input type='number' value={robN} onChange={(e: any) => setRobN(Number(e.target.value))} /></div>
+      </div>
+    </Card>
+
+    <Card className='space-y-3'>
+      <h3 className='text-sm font-medium tracking-tight'>Knobs (auto-discovered)</h3>
+      <h4 className='text-sm font-medium'>Main gases</h4>
+      <div className='grid md:grid-cols-3 gap-2'>
+        {['main1', 'main2', 'main3'].map((k) => {
+          const col = knobSchema?.gases_main?.cols?.[k]
+          const spec: KnobSpec = logicalKnobs?.gases_main?.[k] || { current: 0, min: 0, max: 0, max_step: 0 }
+          return <Card key={k} className='p-2 space-y-1'>
+            <p className='text-xs text-slate-500'>{k} → {col || 'not found'}</p>
+            <Input type='number' value={spec.current} onChange={(e: any) => updateSpec('main', k, null, 'current', Number(e.target.value))} />
+            <div className='grid grid-cols-3 gap-1'>
+              <Input type='number' value={spec.min} onChange={(e: any) => updateSpec('main', k, null, 'min', Number(e.target.value))} />
+              <Input type='number' value={spec.max} onChange={(e: any) => updateSpec('main', k, null, 'max', Number(e.target.value))} />
+              <Input type='number' value={spec.max_step} onChange={(e: any) => updateSpec('main', k, null, 'max_step', Number(e.target.value))} />
+            </div>
+          </Card>
+        })}
       </div>
 
-      <Card className='space-y-2'>
-        <h4 className='text-sm font-medium'>Main gases (auto-discovered)</h4>
+      <h4 className='text-sm font-medium'>Segmented gases ({knobSchema?.gases_segmented?.mode || 'none'})</h4>
+      {(knobSchema?.gases_segmented?.entities || []).length === 0 && <p className='text-sm text-slate-500'>No segmented gas entities detected.</p>}
+      {(knobSchema?.gases_segmented?.entities || []).map((entity: string) => <div key={entity} className='border rounded p-2 space-y-1'>
+        <p className='text-sm font-medium'>{entity}</p>
         <div className='grid md:grid-cols-3 gap-2'>
           {['main1', 'main2', 'main3'].map((k) => {
-            const col = knobSchema?.gases_main?.cols?.[k]
-            const spec: KnobSpec = logicalKnobs?.gases_main?.[k] || { current: 0, min: 0, max: 0, max_step: 0 }
+            const col = knobSchema?.gases_segmented?.cols?.[entity]?.[k]
+            if (!col) return <Card key={k} className='p-2 text-xs text-slate-400'>{k}: n/a</Card>
+            const spec: KnobSpec = logicalKnobs?.gases_segmented?.[entity]?.[k] || { current: 0, min: 0, max: 0, max_step: 0 }
             return <Card key={k} className='p-2 space-y-1'>
-              <p className='text-xs text-slate-500'>{k} → {col || 'not found'}</p>
-              <Input type='number' value={spec.current} onChange={(e: any) => updateSpec('main', k, null, 'current', Number(e.target.value))} />
+              <p className='text-xs text-slate-500'>{k} → {col}</p>
+              <Input type='number' value={spec.current} onChange={(e: any) => updateSpec('seg', entity, k, 'current', Number(e.target.value))} />
               <div className='grid grid-cols-3 gap-1'>
-                <Input type='number' value={spec.min} onChange={(e: any) => updateSpec('main', k, null, 'min', Number(e.target.value))} />
-                <Input type='number' value={spec.max} onChange={(e: any) => updateSpec('main', k, null, 'max', Number(e.target.value))} />
-                <Input type='number' value={spec.max_step} onChange={(e: any) => updateSpec('main', k, null, 'max_step', Number(e.target.value))} />
+                <Input type='number' value={spec.min} onChange={(e: any) => updateSpec('seg', entity, k, 'min', Number(e.target.value))} />
+                <Input type='number' value={spec.max} onChange={(e: any) => updateSpec('seg', entity, k, 'max', Number(e.target.value))} />
+                <Input type='number' value={spec.max_step} onChange={(e: any) => updateSpec('seg', entity, k, 'max_step', Number(e.target.value))} />
               </div>
             </Card>
           })}
         </div>
-      </Card>
-
-      <Card className='space-y-2'>
-        <h4 className='text-sm font-medium'>Segmented gases ({knobSchema?.gases_segmented?.mode || 'none'})</h4>
-        {(knobSchema?.gases_segmented?.entities || []).length === 0 && <p className='text-sm text-slate-500'>No segmented gas entities detected.</p>}
-        {(knobSchema?.gases_segmented?.entities || []).map((entity: string) => <div key={entity} className='border rounded p-2 space-y-1'>
-          <p className='text-sm font-medium'>{entity}</p>
-          <div className='grid md:grid-cols-3 gap-2'>
-            {['main1', 'main2', 'main3'].map((k) => {
-              const col = knobSchema?.gases_segmented?.cols?.[entity]?.[k]
-              if (!col) return <Card key={k} className='p-2 text-xs text-slate-400'>{k}: n/a</Card>
-              const spec: KnobSpec = logicalKnobs?.gases_segmented?.[entity]?.[k] || { current: 0, min: 0, max: 0, max_step: 0 }
-              return <Card key={k} className='p-2 space-y-1'>
-                <p className='text-xs text-slate-500'>{k} → {col}</p>
-                <Input type='number' value={spec.current} onChange={(e: any) => updateSpec('seg', entity, k, 'current', Number(e.target.value))} />
-                <div className='grid grid-cols-3 gap-1'>
-                  <Input type='number' value={spec.min} onChange={(e: any) => updateSpec('seg', entity, k, 'min', Number(e.target.value))} />
-                  <Input type='number' value={spec.max} onChange={(e: any) => updateSpec('seg', entity, k, 'max', Number(e.target.value))} />
-                  <Input type='number' value={spec.max_step} onChange={(e: any) => updateSpec('seg', entity, k, 'max_step', Number(e.target.value))} />
-                </div>
-              </Card>
-            })}
-          </div>
-        </div>)}
-      </Card>
-
-      <details>
-        <summary className='text-sm cursor-pointer'>Advanced penalties</summary>
-        <div className='grid md:grid-cols-2 gap-3 mt-2'>
-          <div><label className='text-sm'>lambda_knob_change</label><Input type='number' step='0.05' value={lambdaKnob} onChange={(e: any) => setLambdaKnob(Number(e.target.value))} /></div>
-          <div><label className='text-sm'>lambda_smoothness</label><Input type='number' step='0.05' value={lambdaSmooth} onChange={(e: any) => setLambdaSmooth(Number(e.target.value))} /></div>
-        </div>
-      </details>
+      </div>)}
     </Card>
 
     <Card className='space-y-3'>
-      <h3 className='text-sm font-medium tracking-tight'>3) Run + Results</h3>
+      <h3 className='text-sm font-medium tracking-tight'>Run + status</h3>
       {loading && <><Progress value={progress} /><p className='text-sm text-slate-500'>{stage}</p></>}
       {error && <Alert variant='destructive'>{error}</Alert>}
-      <Button onClick={run} disabled={!datasetId || !plateId || loading}><Play size={16} className='inline mr-1' />Run optimization</Button>
+      <div className='flex flex-wrap gap-2 items-center'>
+        <Button onClick={run} disabled={!datasetId || !plateId || loading}><Play size={16} className='inline mr-1' />Run optimization</Button>
+        <Badge className={domain === 'in_domain' ? 'bg-emerald-100 text-emerald-700' : domain === 'borderline' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}>
+          Model validity: {domain}
+        </Badge>
+        {result?.domain_score?.score !== undefined && <span className='text-sm text-slate-500'>score={Number(result.domain_score.score).toFixed(3)}</span>}
+      </div>
+      {domain === 'out_of_domain' && <Alert variant='destructive'>Out-of-domain recommendation. Confirm before applying/saving.</Alert>}
     </Card>
 
     {!actual && plateId && <div className='grid md:grid-cols-3 gap-3'>{[1, 2, 3].map((i) => <Skeleton key={i} className='h-20' />)}</div>}
 
-    {actual && <Card className='space-y-3'>
-      <div className='flex items-center justify-between'>
-        <h3 className='text-sm font-medium tracking-tight'>Actual measured color ({device})</h3>
-        <div className='flex gap-2'>
-          <Badge>L μ={actual.L_mean ?? '—'} σ={actual.L_std ?? '—'}</Badge>
-          <Badge>a μ={actual.a_mean ?? '—'} σ={actual.a_std ?? '—'}</Badge>
-          <Badge>b μ={actual.b_mean ?? '—'} σ={actual.b_std ?? '—'}</Badge>
-        </div>
-      </div>
-      <div className='flex gap-2'>
-        <Button variant={channel === 'L' ? 'default' : 'secondary'} onClick={() => setChannel('L')}>L</Button>
-        <Button variant={channel === 'a' ? 'default' : 'secondary'} onClick={() => setChannel('a')}>a</Button>
-        <Button variant={channel === 'b' ? 'default' : 'secondary'} onClick={() => setChannel('b')}>b</Button>
-      </div>
-      {(actual[`${channel}_points`] || []).length ? (
-        <Card className='h-72'>
-          <ResponsiveContainer width='100%' height='100%'>
-            <LineChart data={chartRows}><CartesianGrid strokeDasharray='3 3' /><XAxis dataKey='pos' /><YAxis /><Tooltip /><Legend />
-              <Line type='monotone' dataKey='actual' stroke='#2563eb' name='Actual measured' />
-              <Line type='monotone' dataKey='mean' stroke='#0f766e' strokeDasharray='5 5' name='Actual mean' />
-              {result && <Line type='monotone' dataKey='pred_before' stroke='#b45309' name='Pred baseline' />}
-              {result && <Line type='monotone' dataKey='pred_after' stroke='#16a34a' name='Pred optimized' />}
-            </LineChart>
-          </ResponsiveContainer>
-        </Card>
-      ) : <Alert>positions not available</Alert>}
-    </Card>}
-
     {result && <>
       <Card className='space-y-3'>
-        <h3 className='text-sm font-medium tracking-tight'>Before vs After</h3>
-        <div className='grid md:grid-cols-3 gap-2 text-sm'>
-          <Card className='p-3'>Actual baseline: L {result.baseline_actual?.L ?? '—'} / a {result.baseline_actual?.a ?? '—'} / b {result.baseline_actual?.b ?? '—'}</Card>
-          <Card className='p-3'>Pred baseline: L {result.baseline_pred?.L ?? '—'} / a {result.baseline_pred?.a ?? '—'} / b {result.baseline_pred?.b ?? '—'}</Card>
-          <Card className='p-3'>Pred optimized: L {result.optimized_pred?.L ?? '—'} / a {result.optimized_pred?.a ?? '—'} / b {result.optimized_pred?.b ?? '—'}</Card>
+        <h3 className='text-sm font-medium tracking-tight'>Before → After KPIs</h3>
+        <div className='grid md:grid-cols-4 gap-2 text-sm'>
+          <Card className='p-2'>std_a: {result.before?.std_a?.toFixed?.(4) ?? '—'} → {result.after?.std_a?.toFixed?.(4) ?? '—'} ({pct(result.before?.std_a, result.after?.std_a)})</Card>
+          <Card className='p-2'>std_b: {result.before?.std_b?.toFixed?.(4) ?? '—'} → {result.after?.std_b?.toFixed?.(4) ?? '—'} ({pct(result.before?.std_b, result.after?.std_b)})</Card>
+          <Card className='p-2'>range_a: {result.before?.range_a?.toFixed?.(4) ?? '—'} → {result.after?.range_a?.toFixed?.(4) ?? '—'} ({pct(result.before?.range_a, result.after?.range_a)})</Card>
+          <Card className='p-2'>range_b: {result.before?.range_b?.toFixed?.(4) ?? '—'} → {result.after?.range_b?.toFixed?.(4) ?? '—'} ({pct(result.before?.range_b, result.after?.range_b)})</Card>
+          <Card className='p-2'>worst a: p{result.before?.worst_a?.pos} → p{result.after?.worst_a?.pos}</Card>
+          <Card className='p-2'>worst b: p{result.before?.worst_b?.pos} → p{result.after?.worst_b?.pos}</Card>
+          <Card className='p-2'><Badge className={result.validity?.in_spec ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}>{result.validity?.in_spec ? 'All positions in spec after apply' : 'Out of spec after apply'}</Badge></Card>
         </div>
-        <p className='text-sm text-slate-600'>Diagnostics: iterations={result.diagnostics?.iterations} best_loss={Number(result.diagnostics?.best_loss ?? 0).toFixed(6)}</p>
-        {(result.diagnostics?.warnings || []).length > 0 && <Alert>{(result.diagnostics?.warnings || []).join('; ')}</Alert>}
+        {!!(result.validity?.violations || []).length && <Alert variant='destructive'>{(result.validity?.violations || []).map((v: any) => `${v.metric} p${v.pos}=${Number(v.value).toFixed(3)} not in [${v.min},${v.max}]`).join('; ')}</Alert>}
+      </Card>
+
+      <Card className='space-y-3'>
+        <h3 className='text-sm font-medium tracking-tight'>Profiles (a / b) with spec bands</h3>
+        <Card className='h-64'>
+          <ResponsiveContainer width='100%' height='100%'>
+            <AreaChart data={aRows}><CartesianGrid strokeDasharray='3 3' /><XAxis dataKey='pos' /><YAxis /><Tooltip /><Legend />
+              <Area type='monotone' dataKey='high' stroke='none' fill='#dcfce7' name='spec max' />
+              <Area type='monotone' dataKey='low' stroke='none' fill='#dcfce7' name='spec min' />
+              <Line type='monotone' dataKey='actual' stroke='#2563eb' name='Actual' />
+              <Line type='monotone' dataKey='predicted' stroke='#16a34a' name='Predicted after apply' />
+              {compareIds[0] && <Line type='monotone' dataKey='c1' stroke='#7c3aed' name='Compare 1' />}
+              {compareIds[1] && <Line type='monotone' dataKey='c2' stroke='#ea580c' name='Compare 2' />}
+            </AreaChart>
+          </ResponsiveContainer>
+        </Card>
+        <Card className='h-64'>
+          <ResponsiveContainer width='100%' height='100%'>
+            <AreaChart data={bRows}><CartesianGrid strokeDasharray='3 3' /><XAxis dataKey='pos' /><YAxis /><Tooltip /><Legend />
+              <Area type='monotone' dataKey='high' stroke='none' fill='#dcfce7' name='spec max' />
+              <Area type='monotone' dataKey='low' stroke='none' fill='#dcfce7' name='spec min' />
+              <Line type='monotone' dataKey='actual' stroke='#2563eb' name='Actual' />
+              <Line type='monotone' dataKey='predicted' stroke='#16a34a' name='Predicted after apply' />
+              {compareIds[0] && <Line type='monotone' dataKey='c1' stroke='#7c3aed' name='Compare 1' />}
+              {compareIds[1] && <Line type='monotone' dataKey='c2' stroke='#ea580c' name='Compare 2' />}
+            </AreaChart>
+          </ResponsiveContainer>
+        </Card>
       </Card>
 
       <Card className='space-y-2'>
-        <h3 className='text-sm font-medium tracking-tight'>Recommended knob changes</h3>
-        {Object.entries(result.knob_changes || {}).map(([g, arr]: any) => <div key={g}><p className='text-sm font-medium'>{g}</p><table className='min-w-full text-sm'><thead><tr className='border-b'><th className='p-2 text-left'>Knob</th><th className='p-2 text-left'>Baseline</th><th className='p-2 text-left'>Optimized</th><th className='p-2 text-left'>Δ</th><th className='p-2 text-left'>Bounds</th></tr></thead><tbody>{arr.map((r: any) => <tr key={r.knob} className='border-b'><td className='p-2'>{r.knob}</td><td className='p-2'>{r.baseline.toFixed(4)}</td><td className='p-2'>{r.optimized.toFixed(4)}</td><td className='p-2'>{r.delta.toFixed(4)}</td><td className='p-2'>[{r.bound_min.toFixed(4)}, {r.bound_max.toFixed(4)}]</td></tr>)}</tbody></table></div>)}
-        <div className='flex gap-2'>
+        <h3 className='text-sm font-medium tracking-tight'>Robustness + actions</h3>
+        {result.robustness && <div className='grid md:grid-cols-2 gap-2 text-sm'>
+          <Card className='p-2'>P(in spec): {(Number(result.robustness.p_in_spec || 0) * 100).toFixed(1)}%</Card>
+          <Card className='p-2'>P(improve uniformity): {(Number(result.robustness.p_improve_uniformity || 0) * 100).toFixed(1)}%</Card>
+        </div>}
+        <div className='flex flex-wrap gap-2'>
           <Button variant='secondary' onClick={exportCsv}><Download size={16} className='inline mr-1' />Export CSV</Button>
           <Button variant='secondary' onClick={exportJson}><Download size={16} className='inline mr-1' />Export JSON</Button>
+          <Button variant='secondary' onClick={copyDeltas}><Copy size={16} className='inline mr-1' />Copy deltas</Button>
+          <label className='text-sm ml-2'><input type='checkbox' checked={saveAnyway} onChange={(e) => setSaveAnyway(e.target.checked)} /> Save anyway</label>
+          <Button onClick={saveRun} disabled={!result?.validity?.in_spec && !saveAnyway}><Save size={16} className='inline mr-1' />Save run</Button>
         </div>
       </Card>
     </>}
+
+    <Card className='space-y-2'>
+      <h3 className='text-sm font-medium tracking-tight'>History + Compare</h3>
+      {history.length === 0 && <p className='text-sm text-slate-500'>No saved runs yet.</p>}
+      {history.map((h) => <div key={h.id} className='border rounded p-2 text-sm flex flex-wrap items-center gap-2'>
+        <span>{new Date(h.ts).toLocaleString()}</span>
+        <span>plate={h.plateId}</span>
+        <span>score={h.score ?? '—'}</span>
+        <Badge className={h.inSpec ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}>{h.inSpec ? 'in_spec' : 'out_spec'}</Badge>
+        <Button variant='secondary' onClick={() => setResult(h.result)}>Load</Button>
+        <label><input type='checkbox' checked={compareIds.includes(h.id)} onChange={(e) => setCompareIds((prev) => e.target.checked ? [...new Set([...prev, h.id])].slice(0, 2) : prev.filter((x) => x !== h.id))} /> Compare</label>
+      </div>)}
+    </Card>
   </div>
 }
