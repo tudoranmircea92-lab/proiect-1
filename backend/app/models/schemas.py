@@ -53,6 +53,7 @@ class TrainRequest(BaseModel):
 
 
 class PredictRequest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     dataset_id: str
     model_id: str | None = None
     plate_id: str | None = None
