@@ -124,6 +124,7 @@ class OptimizeRequest(BaseModel):
     seed_plate: str | None = None
     seed_control_knobs: dict[str, float] | None = None
     seed_context: dict[str, Any] | None = None
+    knobs: dict[str, Any] | None = None
 
 
 class Solution(BaseModel):

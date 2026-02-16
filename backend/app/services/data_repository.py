@@ -143,6 +143,103 @@ class DataRepository:
             out["debug"] = knob_debug
         return out
 
+
+    def discover_knob_schema(self, df: pd.DataFrame, row: pd.Series | None = None) -> dict:
+        import re
+
+        cols = list(df.columns)
+
+        def _norm(c: str) -> str:
+            return str(c).strip().lower().replace('_', '.')
+
+        def _main_key(col: str) -> str | None:
+            c = _norm(col)
+            if any(x in c for x in ['main1', 'maingas1', 'm1g']):
+                return 'main1'
+            if any(x in c for x in ['main2', 'maingas2', 'm2g']):
+                return 'main2'
+            if any(x in c for x in ['main3', 'maingas3', 'm3g']):
+                return 'main3'
+            return None
+
+        cathodes: dict[str, dict] = {}
+        for c in cols:
+            n = _norm(c)
+            m = re.match(r'^c(\d+)[.]', n)
+            if not m:
+                continue
+            cid = f"c{int(m.group(1))}"
+            cathodes.setdefault(cid, {'id': cid, 'on_col': None, 'power_cols': []})
+            if re.search(r'\.on$', n) or re.search(r'\.status$', n):
+                if cathodes[cid]['on_col'] is None:
+                    cathodes[cid]['on_col'] = c
+            if ('pwr' in n or 'power' in n) and n.startswith(f'{cid}.'):
+                cathodes[cid]['power_cols'].append(c)
+
+        # global main gas discovery
+        main_cols: dict[str, str] = {}
+        for key in ['main1', 'main2', 'main3']:
+            candidates_global = []
+            candidates_any = []
+            for c in cols:
+                n = _norm(c)
+                if _main_key(c) != key:
+                    continue
+                candidates_any.append(c)
+                if re.search(r'c\d+|seg\d+', n):
+                    continue
+                candidates_global.append(c)
+            picked = (candidates_global or candidates_any)
+            if picked:
+                main_cols[key] = picked[0]
+
+        # segmented by cathode
+        segmented_cols: dict[str, dict[str, str]] = {}
+        for c in cols:
+            n = _norm(c)
+            cm = re.match(r'^(c\d+)[.]', n)
+            if not cm:
+                continue
+            mk = _main_key(c)
+            if not mk:
+                continue
+            ent = cm.group(1)
+            segmented_cols.setdefault(ent, {})
+            segmented_cols[ent].setdefault(mk, c)
+
+        mode = 'none'
+        entities: list[str] = []
+        seg_map: dict[str, dict[str, str]] = {}
+        if segmented_cols:
+            mode = 'by_cathode'
+            entities = sorted(segmented_cols.keys(), key=lambda x: int(x[1:]) if x[1:].isdigit() else 10**9)
+            seg_map = {e: segmented_cols[e] for e in entities}
+        else:
+            # segmented by segment entity
+            by_seg: dict[str, dict[str, str]] = {}
+            for c in cols:
+                n = _norm(c)
+                sm = re.search(r'(seg\d+)', n)
+                if not sm:
+                    continue
+                mk = _main_key(c)
+                if not mk:
+                    continue
+                ent = sm.group(1)
+                by_seg.setdefault(ent, {})
+                by_seg[ent].setdefault(mk, c)
+            if by_seg:
+                mode = 'by_segment'
+                entities = sorted(by_seg.keys(), key=lambda x: int(''.join(ch for ch in x if ch.isdigit()) or 10**9))
+                seg_map = {e: by_seg[e] for e in entities}
+
+        cathode_list = sorted(cathodes.values(), key=lambda x: int(x['id'][1:]) if x['id'][1:].isdigit() else 10**9)
+        return {
+            'cathodes': cathode_list,
+            'gases_main': {'keys': ['main1', 'main2', 'main3'], 'cols': main_cols},
+            'gases_segmented': {'mode': mode, 'entities': entities, 'cols': seg_map},
+        }
+
     def plate_rows(self, dataset_id: str, filt: DataFilter | None = None, limit: int = 200) -> list[dict]:
         df = self.apply_filter(self.get(dataset_id), filt)
         plate_col = self.plate_col(df)
@@ -243,6 +340,7 @@ class DataRepository:
                     active_cathodes.append(cath)
 
         actual = {dev: self.color_profile(dataset_id, plate_id, dev) for dev in ["RG", "RF", "T"]}
+        knob_schema = self.discover_knob_schema(df, row=row)
         return {
             "plate_id": str(plate_id),
             "ts": row.get(ts_col) if ts_col else None,
@@ -251,4 +349,5 @@ class DataRepository:
             "active_cathodes": active_cathodes,
             "baseline_knobs": baseline_knobs,
             "actual_color": actual,
+            "knob_schema": knob_schema,
         }

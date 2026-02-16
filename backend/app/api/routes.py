@@ -251,6 +251,37 @@ def seed_plates(dataset_id: str, limit: int = 200):
     return sanitize_jsonable({'rows': rows})
 
 
+
+
+@router.get('/optimize/context')
+def optimize_context(dataset_id: str, plate_id: str | None = None, product: str | None = None, thickness: str | None = None, from_ts: str | None = None, to_ts: str | None = None):
+    filt = None
+    if any([product, thickness, from_ts, to_ts]):
+        filt = DataFilter(products=[product] if product else [], thicknesses=[thickness] if thickness else [], date_from=from_ts, date_to=to_ts)
+
+    df = repo.apply_filter(repo.get(dataset_id), filt)
+    if df.empty:
+        return sanitize_jsonable({'knob_schema': {'cathodes': [], 'gases_main': {'keys': ['main1', 'main2', 'main3'], 'cols': {}}, 'gases_segmented': {'mode': 'none', 'entities': [], 'cols': {}}}})
+
+    row = None
+    if plate_id:
+        try:
+            row = repo.plate_row(dataset_id, plate_id, filt=filt)
+        except Exception:
+            row = None
+
+    knob_schema = repo.discover_knob_schema(df, row=row)
+    out = {'knob_schema': knob_schema}
+
+    if plate_id and trainer.feature_schema:
+        try:
+            baseline = repo.plate_baseline(dataset_id, plate_id, trainer.feature_schema.get('control_knobs', []), filt=filt)
+            out['baseline'] = baseline
+        except Exception:
+            pass
+
+    return sanitize_jsonable(out)
+
 @router.get('/filters/options')
 def filter_options(dataset_id: str):
     df = repo.get(dataset_id)

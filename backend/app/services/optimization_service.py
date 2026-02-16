@@ -121,6 +121,83 @@ class OptimizationService:
         context = {c: row.get(c, None) for c in context_cols}
         return control, context, row.to_dict()
 
+
+    def _apply_logical_knobs(
+        self,
+        req: OptimizeRequest,
+        knob_schema: dict[str, Any],
+        active_prefixes: set[str],
+        baseline_control: dict[str, float],
+        ranges: dict[str, tuple[float, float]],
+    ) -> list[str]:
+        warnings: list[str] = []
+        knobs = req.knobs or {}
+
+        def _to_float(v):
+            try:
+                return float(v)
+            except Exception:
+                return None
+
+        gases_main = knobs.get('gases_main', {}) if isinstance(knobs, dict) else {}
+        main_cols = ((knob_schema or {}).get('gases_main') or {}).get('cols') or {}
+        for main_key, spec in gases_main.items():
+            col = main_cols.get(main_key)
+            if not col or col not in ranges:
+                continue
+            if isinstance(spec, dict):
+                cur = _to_float(spec.get('current'))
+                mn = _to_float(spec.get('min'))
+                mx = _to_float(spec.get('max'))
+            else:
+                cur = _to_float(spec)
+                mn = mx = None
+            if cur is not None:
+                baseline_control[col] = cur
+            lo, hi = ranges[col]
+            if mn is not None:
+                lo = mn
+            if mx is not None:
+                hi = mx
+            if hi < lo:
+                hi = lo
+            ranges[col] = (lo, hi)
+
+        seg = knobs.get('gases_segmented', {}) if isinstance(knobs, dict) else {}
+        seg_schema = (knob_schema or {}).get('gases_segmented') or {}
+        mode = seg_schema.get('mode', 'none')
+        cols_map = seg_schema.get('cols') or {}
+        for entity_id, entity_spec in (seg.items() if isinstance(seg, dict) else []):
+            entity_cols = cols_map.get(entity_id) or {}
+            if mode == 'by_cathode' and entity_id not in active_prefixes:
+                warnings.append(f'Ignored OFF cathode request for {entity_id}')
+                continue
+            if not isinstance(entity_spec, dict):
+                continue
+            for main_key, spec in entity_spec.items():
+                col = entity_cols.get(main_key)
+                if not col or col not in ranges:
+                    continue
+                if isinstance(spec, dict):
+                    cur = _to_float(spec.get('current'))
+                    mn = _to_float(spec.get('min'))
+                    mx = _to_float(spec.get('max'))
+                else:
+                    cur = _to_float(spec)
+                    mn = mx = None
+                if cur is not None:
+                    baseline_control[col] = cur
+                lo, hi = ranges[col]
+                if mn is not None:
+                    lo = mn
+                if mx is not None:
+                    hi = mx
+                if hi < lo:
+                    hi = lo
+                ranges[col] = (lo, hi)
+
+        return warnings
+
     def optimize(self, df_raw: pd.DataFrame, req: OptimizeRequest) -> dict:
         if not self.trainer.feature_schema:
             raise ValueError("Train a model before running optimizer.")
@@ -150,6 +227,7 @@ class OptimizationService:
         tol = req.tolerances or DeviceTarget(L=0.0, a=0.0, b=0.0)
 
         baseline_control, fixed_context, baseline_row = self._pick_baseline(df, req, control_cols_all, context_cols, target)
+        knob_schema = self.repo.discover_knob_schema(df, row=pd.Series(baseline_row))
 
         # active cathodes from pwr threshold
         active_prefixes = set()
@@ -173,6 +251,7 @@ class OptimizationService:
             if not bdf.empty:
                 bounds_df = bdf
         ranges = self._knob_ranges(bounds_df, control_cols)
+        warnings = self._apply_logical_knobs(req, knob_schema, active_prefixes, baseline_control, ranges)
 
         baseline_pred = self.trainer.predict(baseline_control, fixed_context)
 
@@ -243,7 +322,8 @@ class OptimizationService:
             },
             "knob_changes": changes,
             "bounds": {k: {"min": v[0], "max": v[1]} for k, v in ranges.items()},
-            "diagnostics": {"iterations": req.params.n_iterations, "best_loss": best_loss},
+            "diagnostics": {"iterations": req.params.n_iterations, "best_loss": best_loss, "warnings": warnings},
             "device": req.device,
             "plate_id": req.plate_id,
+            "knob_schema": knob_schema,
         }
