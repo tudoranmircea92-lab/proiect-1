@@ -50,7 +50,7 @@ export function PlasmaStabilityPage() {
       setPlasmaReady(false)
       const status = e?.response?.status
       const detail = e?.response?.data?.detail
-      setHealthMsg(`Plasma backend not available. Check that /api/plasma is mounted. ${status ? `(status ${status})` : ''} ${detail ? `- ${JSON.stringify(detail)}` : ''}`)
+      setHealthMsg(`Plasma backend not available. Check that /api/plasma is mounted. Open /docs and confirm plasma endpoints exist. ${status ? `(status ${status})` : ''} ${detail ? `- ${JSON.stringify(detail)}` : ''}`)
     })
     return () => { mounted = false }
   }, [datasetId])

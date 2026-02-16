@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import router
+from routes.plasma import router as plasma_router
 
 
 def configure_logging() -> None:
@@ -24,6 +25,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(plasma_router, prefix="/api/plasma", tags=["plasma"])
 app.include_router(router)
 
 
