@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router as app_router
 from core.errors import register_error_handlers
-from routes.plasma import legacy_router, router as plasma_router
+from routes.plasma import router as plasma_router
 
 
 def configure_logging() -> None:
@@ -31,7 +31,6 @@ register_error_handlers(app)
 
 # Plasma contract-first routes.
 app.include_router(plasma_router)
-app.include_router(legacy_router)
 
 # Remaining application routes.
 app.include_router(app_router)

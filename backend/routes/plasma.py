@@ -9,22 +9,23 @@ from core.errors import PlasmaApiError
 from schemas.plasma import PlasmaStabilityRequest
 from services.plasma_service import PlasmaService
 
-router = APIRouter(prefix="/api/plasma", tags=["plasma"])
-legacy_router = APIRouter(tags=["plasma-legacy"])
+router = APIRouter(prefix="/api", tags=["plasma"])
 
 
-@router.get("/health")
+@router.get("/plasma/health", tags=["plasma"])
 def plasma_health():
-    return PlasmaService.health()
+    payload = PlasmaService.health()
+    payload["status"] = "ok"
+    return payload
 
 
-@router.get("/columns")
+@router.get("/plasma/columns", tags=["plasma"])
 def plasma_columns():
     return PlasmaService.columns().model_dump(mode="json")
 
 
-@router.post("/stability")
-def plasma_stability(payload: PlasmaStabilityRequest):
+@router.post("/plasma_stability", include_in_schema=False)
+def plasma_stability_legacy(payload: PlasmaStabilityRequest):
     if payload.to_ts < payload.from_ts:
         raise PlasmaApiError(
             status_code=400,
@@ -35,8 +36,14 @@ def plasma_stability(payload: PlasmaStabilityRequest):
     return PlasmaService.stability(payload).model_dump(mode="json")
 
 
-@router.get("/stability/export")
-def plasma_stability_export(
+@router.post("/plasma/stability", tags=["plasma"])
+def plasma_stability(payload: PlasmaStabilityRequest):
+    # UI-compatible endpoint forwarding to existing legacy handler behavior.
+    return plasma_stability_legacy(payload)
+
+
+@router.get("/plasma_stability/export", include_in_schema=False)
+def plasma_stability_export_legacy(
     from_ts: datetime,
     to_ts: datetime,
     active_threshold: float = 0.0,
@@ -63,20 +70,25 @@ def plasma_stability_export(
     )
 
 
-def _deprecated(path_hint: str):
-    raise PlasmaApiError(
-        status_code=410,
-        code="PLASMA_ENDPOINT_DEPRECATED",
-        message="Deprecated endpoint. Use /api/plasma/...",
-        details={"hint": f"Use {path_hint}"},
+@router.get("/plasma/stability/export", tags=["plasma"])
+def plasma_stability_export(
+    from_ts: datetime,
+    to_ts: datetime,
+    active_threshold: float = 0.0,
+    aggregation: str = Query("mean", pattern="^(mean|median)$"),
+    group_by: list[str] = Query(default=["device", "plate"]),
+    features: list[str] = Query(default=[]),
+    product: list[str] = Query(default=[]),
+    thickness_mm: list[float] = Query(default=[]),
+):
+    # UI-compatible endpoint forwarding to existing legacy handler behavior.
+    return plasma_stability_export_legacy(
+        from_ts=from_ts,
+        to_ts=to_ts,
+        active_threshold=active_threshold,
+        aggregation=aggregation,
+        group_by=group_by,
+        features=features,
+        product=product,
+        thickness_mm=thickness_mm,
     )
-
-
-@legacy_router.api_route("/api/plasma_stability", methods=["GET", "POST"], include_in_schema=False)
-def plasma_stability_legacy():
-    _deprecated("/api/plasma/stability")
-
-
-@legacy_router.api_route("/api/plasma/export_csv", methods=["GET", "POST"], include_in_schema=False)
-def plasma_export_csv_legacy():
-    _deprecated("/api/plasma/stability/export")

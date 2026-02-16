@@ -36,8 +36,17 @@ def test_plasma_stability_contract():
     assert isinstance(body['series'], list)
 
 
-def test_legacy_returns_410():
-    res = client.get('/api/plasma_stability')
-    assert res.status_code == 410
+def test_legacy_forward_works():
+    payload = {
+        'from_ts': '2026-02-09T13:47:00',
+        'to_ts': '2026-02-16T13:47:00',
+        'active_threshold': 0.0,
+        'aggregation': 'mean',
+        'group_by': ['device', 'plate'],
+        'features': ['c4.pwr'],
+        'filters': {'product': [], 'thickness_mm': []},
+    }
+    res = client.post('/api/plasma_stability', json=payload)
+    assert res.status_code == 200
     body = res.json()
-    assert body['error']['code'] == 'PLASMA_ENDPOINT_DEPRECATED'
+    assert 'window' in body and 'score' in body
