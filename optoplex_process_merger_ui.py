@@ -292,7 +292,22 @@ def _compute_ramp_features(seg_mat: np.ndarray, num_ramps: np.ndarray) -> Dict[s
     }
 
 
+def _norm_target(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s or s.lower() in {"nan", "none", "null"}:
+        return None
+    return s.upper()
+
+
 def _prepare_long(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Minimal process long format (no explosive derived features):
+    keys: ts, plate, comp
+    globals: glassThickness_mm, nomProcessSpeed_mm, actProcessSpeed_mm, actVacuumPressure, actFreq
+    per-comp: pwr/voltage/current, seg gas flows, material gas flows, target info
+    """
     comp = df["Location"].map(_extract_comp)
     base = pd.DataFrame(
         {
@@ -302,7 +317,7 @@ def _prepare_long(df: pd.DataFrame) -> pd.DataFrame:
         }
     )
 
-    # globals per plate (single columns after aggregation, NOT per compartment)
+    # global plate-level columns (kept as single columns after wide pivot)
     if "glassThickness" in df.columns:
         base["glassThickness_mm"] = _safe_float32(df["glassThickness"])
     if "nomProcessSpeed_mm" in df.columns:
@@ -313,61 +328,72 @@ def _prepare_long(df: pd.DataFrame) -> pd.DataFrame:
         base["actProcessSpeed_mm"] = _safe_float32(df["actProcessSpeed_mm"])
     elif "actProcessSpeed" in df.columns:
         base["actProcessSpeed_mm"] = _safe_float32(df["actProcessSpeed"])
+    if "actVacuumPressure" in df.columns:
+        base["actVacuumPressure"] = _safe_float32(df["actVacuumPressure"])
+    if "actFreq" in df.columns:
+        base["actFreq"] = _safe_float32(df["actFreq"])
 
-    optional_fields = [
-        "actVacuumPressure",
-        "actFreq",
-        "actPower",
-        "actPowerPMF",
-        "actVoltageUMF",
-        "actCurrentIMF",
-        "actSigmaVoltage",
-        "actSigmaCurrent",
-        "actArcRate1",
-        "actHArc",
-        "actSArc",
-        "actSArcB",
-        "actWaterFlowShielding",
-        "actWaterFlowSurround",
-    ]
-    for c in optional_fields:
-        if c in df.columns:
-            base[c] = _safe_float32(df[c])
+    # per-comp minimal numeric core
+    if "actPower" in df.columns:
+        base["pwr"] = _safe_float32(df["actPower"])
+    if "actVoltageUMF" in df.columns:
+        base["voltage"] = _safe_float32(df["actVoltageUMF"])
+    if "actCurrentIMF" in df.columns:
+        base["current"] = _safe_float32(df["actCurrentIMF"])
 
-    if "nomGasSegment" in df.columns:
-        base["numRamps"] = pd.to_numeric(df["nomGasSegment"], errors="coerce").fillna(0).clip(0, 11).astype("float32")
-    else:
-        base["numRamps"] = np.float32(0)
-
-    seg_cols: List[str] = []
+    # per-comp segment gas
     for i in range(1, 12):
-        raw = f"actSegGas{i}Flow"
-        out = f"seg{i:02d}"
-        seg_cols.append(out)
-        base[out] = _safe_float32(df[raw]).fillna(0.0) if raw in df.columns else np.float32(0)
+        src = f"actSegGas{i}Flow"
+        if src in df.columns:
+            base[f"s{i}g"] = _safe_float32(df[src])
 
-    seg_mat = base[seg_cols].to_numpy(dtype=np.float32)
-    R = np.clip(np.rint(base["numRamps"].to_numpy(dtype=np.float32)), 0, 11).astype(np.int32)
-    feat = _compute_ramp_features(seg_mat, R)
-    for k, v in feat.items():
-        base[k] = v
+    # per-comp material gas
+    gas_map = {"Ar_flow": "m1g", "N2_flow": "m2g", "O2_flow": "m3g"}
+    for src, tgt in gas_map.items():
+        if src in df.columns:
+            base[tgt] = _safe_float32(df[src])
 
-    denom = np.maximum(base["gasTotal"].to_numpy(dtype=np.float32), np.float32(1e-6))
-    seg_pct = (seg_mat / denom[:, None]).astype(np.float32)
-    for i in range(11):
-        base[f"seg{i + 1:02d}_pct"] = seg_pct[:, i]
+    # target info
+    if "actTargetMaterial1" in df.columns:
+        base["acttar1"] = df["actTargetMaterial1"].map(_norm_target)
+    if "actTarget2KWH" in df.columns:
+        base["kwh2"] = _safe_float32(df["actTarget2KWH"])
+    if "actTarget1KWH" in df.columns:
+        base["kwh1"] = _safe_float32(df["actTarget1KWH"])
+    if "actTargetMaterial2" in df.columns:
+        base["acttar2"] = df["actTargetMaterial2"].map(_norm_target)
 
-    return base.copy()
+    base["plate"] = base["plate"].astype("Int64")
+    base["comp"] = base["comp"].astype("Int64")
+    base["ts"] = pd.to_datetime(base["ts"], errors="coerce")
+
+    # filter rows with keys
+    base = base.dropna(subset=["ts", "plate", "comp"]).copy()
+    return base
 
 
 def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     d = long_df.dropna(subset=["ts", "plate", "comp"]).copy()
     d["comp"] = d["comp"].astype(int)
 
-    # Keep one global column for thickness/speeds (instead of c1..c70 variants)
+    # Relevant compartments only: those having acttar1 or acttar2 at least once
+    if "acttar1" in d.columns or "acttar2" in d.columns:
+        m1 = d["acttar1"].notna() if "acttar1" in d.columns else pd.Series(False, index=d.index)
+        m2 = d["acttar2"].notna() if "acttar2" in d.columns else pd.Series(False, index=d.index)
+        relevant = set(d.loc[m1 | m2, "comp"].astype(int).tolist())
+        if relevant:
+            d = d[d["comp"].isin(relevant)].copy()
+
+    # Global columns: one column each, not per compartment
     global_cols = [
         c
-        for c in ["glassThickness_mm", "nomProcessSpeed_mm", "actProcessSpeed_mm"]
+        for c in [
+            "glassThickness_mm",
+            "nomProcessSpeed_mm",
+            "actProcessSpeed_mm",
+            "actVacuumPressure",
+            "actFreq",
+        ]
         if c in d.columns
     ]
 
@@ -376,15 +402,56 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     else:
         global_df = d[["ts", "plate"]].drop_duplicates().copy()
 
-    value_cols = [c for c in d.columns if c not in ["ts", "plate", "comp", *global_cols]]
-    if value_cols:
-        wide = d.set_index(["ts", "plate", "comp"])[value_cols].unstack("comp")
-        wide.columns = [f"c{comp}.{feat}" for feat, comp in wide.columns]
-        wide = wide.reset_index().copy()
-        out = global_df.merge(wide, on=["ts", "plate"], how="left")
-    else:
-        out = global_df.copy()
+    # Build per-comp values (minimal set)
+    keep_candidates = ["pwr", "voltage", "current"] + [f"s{i}g" for i in range(1, 12)] + ["m1g", "m2g", "m3g", "acttar1", "kwh1", "acttar2", "kwh2"]
+    value_cols = [c for c in keep_candidates if c in d.columns]
 
+    if not value_cols:
+        return global_df.copy()
+
+    # keep acttar2/kwh2 ONLY for compartments that have real target2
+    comps_with_tar2 = set()
+    if "acttar2" in d.columns:
+        comps_with_tar2 = set(d.loc[d["acttar2"].notna(), "comp"].astype(int).tolist())
+
+    # aggregate per (ts, plate, comp)
+    agg = {}
+    for c in value_cols:
+        if c in {"acttar1", "acttar2"}:
+            agg[c] = "first"
+        else:
+            agg[c] = "mean"
+
+    per_comp = d.groupby(["ts", "plate", "comp"], as_index=False).agg(agg)
+
+    # remove acttar2/kwh2 rows for comps without real target2
+    if comps_with_tar2 and "acttar2" in per_comp.columns:
+        mask_tar2_comp = per_comp["comp"].isin(comps_with_tar2)
+        per_comp.loc[~mask_tar2_comp, "acttar2"] = pd.NA
+        if "kwh2" in per_comp.columns:
+            per_comp.loc[~mask_tar2_comp, "kwh2"] = pd.NA
+
+    wide = per_comp.set_index(["ts", "plate", "comp"])[value_cols].unstack("comp")
+    wide.columns = [f"c{comp}.{feat}" for feat, comp in wide.columns]
+    wide = wide.reset_index().copy()
+
+    out = global_df.merge(wide, on=["ts", "plate"], how="left")
+
+    # hard-drop any leaked gigantic legacy columns if present
+    drop_prefixes = (
+        "c1.gas", "c1.seg", "c1.frontBackRatio", "c1.segMaxOverMean",
+    )
+    # generic filter: keep only allowed c{comp}.<minimal>
+    allowed_suffix = set(["pwr", "voltage", "current", "m1g", "m2g", "m3g", "acttar1", "kwh1", "acttar2", "kwh2"] + [f"s{i}g" for i in range(1, 12)])
+    keep_cols = []
+    for c in out.columns:
+        if not c.startswith("c") or "." not in c:
+            keep_cols.append(c)
+            continue
+        suffix = c.split(".", 1)[1]
+        if suffix in allowed_suffix:
+            keep_cols.append(c)
+    out = out[keep_cols]
     return out
 
 

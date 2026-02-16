@@ -44,3 +44,4 @@ python process_pipeline_glassfile_to_parquet.py \
 ```
 
 Notă: în merge-ul final, grosimea și viteza de proces sunt păstrate ca **o singură coloană globală** (`glassThickness_mm`, `nomProcessSpeed_mm`, `actProcessSpeed_mm`), nu pe fiecare compartiment/catod.
+Target-urile pe compartiment sunt minimizate: `cX.acttar2`/`cX.kwh2` se păstrează doar pentru compartimentele care au efectiv target2 nenul.
