@@ -2,9 +2,8 @@ import { Download, Play } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Accordion, Alert, Badge, Button, Card, Input, Progress, Select, Skeleton } from '../components/ui'
-import { api } from '../lib/api'
 import { apiUrl } from '../api/config'
-import { plasmaHealth, plasmaStability } from '../api/plasma'
+import { exportCsv, health, stability } from '../api/plasma'
 import { useDataset } from '../lib/datasetContext'
 import { waitForJob } from '../lib/jobs'
 
@@ -46,7 +45,7 @@ export function PlasmaStabilityPage() {
     let mounted = true
     const finalUrl = apiUrl('/api/plasma/health')
 
-    plasmaHealth().then(() => {
+    health().then(() => {
       if (!mounted) return
       setPlasmaReady(true)
       setHealthMsg('')
@@ -83,7 +82,7 @@ export function PlasmaStabilityPage() {
         bins: 'auto',
       }
 
-      const start = await plasmaStability(payload)
+      const { data: start } = await stability(payload)
       const maybeJobId = start?.job_id
       if (maybeJobId) {
         setStage('Filtering rows')
@@ -101,10 +100,10 @@ export function PlasmaStabilityPage() {
         setResult(start)
       }
     } catch (e: any) {
-      const status = e?.response?.status ?? null
-      const url = apiUrl('/api/plasma/stability')
-      const response = e?.response?.data ?? null
-      const detail = (typeof response?.detail === 'string' ? response.detail : e?.message) || 'Unknown error'
+      const status = e?.status ?? null
+      const url = e?.url || apiUrl('/api/plasma/stability')
+      const response = e?.body ?? null
+      const detail = response?.error?.message || e?.message || 'Unknown error'
       setErrorObj({
         detail,
         hint: response?.hint,
@@ -138,20 +137,25 @@ export function PlasmaStabilityPage() {
 
   const state = level(result?.kpis?.overall_score)
 
-  const exportCsv = async () => {
+  const onExportCsv = async () => {
     try {
-      const url = jobId ? `/api/plasma/export_csv?job_id=${jobId}` : '/api/plasma/export_csv'
-      const r = await api.get(url, { responseType: 'blob' })
+      const params = new URLSearchParams({
+        from_ts: fromTs,
+        to_ts: toTs,
+        active_threshold: String(threshold),
+        aggregation: agg,
+      })
+      const { blob } = await exportCsv(params.toString())
       const a = document.createElement('a')
-      a.href = URL.createObjectURL(new Blob([r.data], { type: 'text/csv' }))
+      a.href = URL.createObjectURL(blob)
       a.download = 'plasma_stability.csv'
       a.click()
     } catch (e: any) {
       setErrorObj({
-        detail: 'Export failed',
-        status: e?.response?.status ?? null,
-        url: (e?.config as any)?.__finalUrl || `${e?.config?.baseURL || ''}${e?.config?.url || '/api/plasma/export_csv'}`,
-        response: e?.response?.data ?? e?.message,
+        detail: e?.message || 'Export failed',
+        status: e?.status ?? null,
+        url: e?.url ?? apiUrl('/api/plasma/stability/export'),
+        response: e?.body ?? null,
       })
     }
   }
@@ -171,7 +175,7 @@ export function PlasmaStabilityPage() {
         <div><label className='text-xs text-slate-600'>To</label><Input type='datetime-local' value={toTs} onChange={(e: any) => setToTs(e.target.value)} /></div>
         <div><label className='text-xs text-slate-600'>Active threshold</label><Select value={String(threshold)} onChange={(e: any) => setThreshold(Number(e.target.value))}><option value='0'>0.0</option><option value='0.1'>0.1</option><option value='1'>1.0</option></Select></div>
         <div><label className='text-xs text-slate-600'>Aggregation</label><Select value={agg} onChange={(e: any) => setAgg(e.target.value)}><option value='mean'>mean</option><option value='median'>median</option></Select></div>
-        <div className='flex gap-2'><Button onClick={run} disabled={!datasetId || loading || !plasmaReady}><Play size={16} className='inline mr-1' />Run</Button><Button variant='secondary' onClick={exportCsv} disabled={!result}><Download size={16} className='inline mr-1' />Export CSV</Button></div>
+        <div className='flex gap-2'><Button onClick={run} disabled={!datasetId || loading || !plasmaReady}><Play size={16} className='inline mr-1' />Run</Button><Button variant='secondary' onClick={onExportCsv} disabled={!result || !plasmaReady}><Download size={16} className='inline mr-1' />Export CSV</Button></div>
       </div>
 
       {!plasmaReady && <Alert variant='destructive'>

@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from app.models.schemas import (
     DataFilter,
@@ -22,7 +22,6 @@ from app.models.schemas import (
 from app.services.data_repository import DataRepository
 from app.services.job_service import JobService
 from app.services.optimization_service import OptimizationService
-from app.services.plasma_stability_service import PlasmaStabilityService
 from app.services.training_service import TrainingService
 from app.services.json_sanitize import count_non_finite, sanitize_jsonable
 
@@ -31,7 +30,6 @@ router = APIRouter(prefix="/api")
 repo = DataRepository()
 trainer = TrainingService()
 optimizer = OptimizationService(trainer, repo)
-plasma = PlasmaStabilityService()
 jobs = JobService()
 
 
@@ -215,130 +213,6 @@ def optimize(payload: OptimizeRequest):
 
     jobs.run_async(job_id, lambda: _job(work, [(15, 'Preparing search'), (40, 'Running candidates'), (75, 'Scoring solutions'), (95, 'Building report'), (100, 'Done')])(job_id))
     return sanitize_jsonable({'job_id': job_id})
-
-
-@router.get('/plasma/health')
-@router.get('/plasma/health/')
-def plasma_health():
-    return sanitize_jsonable({
-        'ok': True,
-        'version': '1.0.0',
-        'routes': [
-            'GET /api/plasma/health',
-            'GET /api/plasma/columns',
-            'POST /api/plasma/stability',
-            'GET /api/plasma/export_csv?job_id=...',
-        ],
-    })
-
-
-@router.get('/plasma/columns')
-@router.get('/plasma/columns/')
-def plasma_columns(dataset_id: str):
-    try:
-        if not dataset_id:
-            raise HTTPException(status_code=400, detail={"detail": "Missing dataset_id", "hint": "Load data first in Data tab", "action": "Go to Data → Load + Profile"})
-        df = repo.get(dataset_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail={"detail": "Dataset not loaded", "hint": str(exc), "action": "Go to Data → Load + Profile"}) from exc
-    return sanitize_jsonable(plasma.columns(df))
-
-
-@router.post('/plasma/stability')
-@router.post('/plasma/stability/')
-def plasma_stability(payload: PlasmaStabilityRequest):
-    missing = []
-    if not payload.dataset_id:
-        missing.append('dataset_id')
-    if not payload.from_ts:
-        missing.append('from')
-    if not payload.to_ts:
-        missing.append('to')
-    if missing:
-        raise HTTPException(status_code=400, detail={"detail": f"Missing {','.join(missing)}", "hint": "Provide dataset_id, from, and to before running", "action": "Fill required fields and retry"})
-
-    try:
-        _ = repo.get(payload.dataset_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail={"detail": "Dataset not loaded", "hint": str(exc), "action": "Go to Data → Load + Profile"}) from exc
-
-    if payload.from_ts and payload.to_ts:
-        try:
-            f = time.strptime(payload.from_ts[:16], '%Y-%m-%dT%H:%M')
-            t = time.strptime(payload.to_ts[:16], '%Y-%m-%dT%H:%M')
-            if t < f:
-                raise HTTPException(status_code=400, detail={"detail": "Invalid date range", "hint": "`to` must be after `from`", "action": "Adjust date range and retry"})
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail={"detail": "Invalid date format", "hint": "Use YYYY-MM-DDTHH:MM", "action": "Correct date inputs and retry"}) from exc
-
-    job_id = jobs.create()
-
-    def work():
-        try:
-            df = repo.get(payload.dataset_id)
-            df = repo.apply_filter(df, payload.filter)
-            result = plasma.compute(payload, df)
-            payload_out = {'interval': result.interval, 'kpis': result.kpis, 'per_cathode': result.per_cathode, 'trends': result.trends, 'data_notes': result.data_notes}
-            bad = count_non_finite(payload_out)
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug('plasma/stability non-finite count=%s', bad)
-            return sanitize_jsonable(payload_out)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail={"detail": "Plasma stability failed", "hint": str(exc), "action": "Check filters and date range"}) from exc
-
-    jobs.run_async(job_id, lambda: _job(work, [(15, 'Filtering rows'), (40, 'Detecting cathodes'), (70, 'Computing metrics'), (90, 'Building charts payload'), (100, 'Done')])(job_id))
-    return sanitize_jsonable({'job_id': job_id})
-
-
-@router.post('/plasma_stability')
-def plasma_stability_legacy(payload: PlasmaStabilityRequest):
-    return plasma_stability(payload)
-
-
-@router.get('/plasma/export_csv')
-def plasma_export_csv(job_id: str | None = None):
-    if job_id:
-        try:
-            job = jobs.get(job_id)
-            if job.get('status') != 'done' or not job.get('result'):
-                raise HTTPException(status_code=400, detail={"detail": "Job not completed", "hint": "Run analysis first and wait for completion", "action": "Retry export after job is done"})
-            result = job['result']
-            import pandas as pd
-            df = pd.DataFrame(result.get('per_cathode', []))
-            if not df.empty:
-                df.insert(0, 'interval_from', result.get('interval', {}).get('from'))
-                df.insert(1, 'interval_to', result.get('interval', {}).get('to'))
-                for k, v in (result.get('kpis', {}) or {}).items():
-                    df[k] = v
-            from io import StringIO
-            buf = StringIO(); df.to_csv(buf, index=False)
-            return PlainTextResponse(content=buf.getvalue(), media_type='text/csv')
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail={"detail": "Export failed", "hint": str(exc), "action": "Run analysis again"}) from exc
-
-    try:
-        media_type, content = plasma.export_last('csv')
-        return PlainTextResponse(content=content, media_type=media_type)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail={"detail": "No export data", "hint": str(exc), "action": "Run stability analysis first"}) from exc
-
-
-@router.get('/plasma/stability/export')
-def plasma_stability_export(format: str = Query('csv', pattern='^(csv|json)$')):
-    try:
-        media_type, content = plasma.export_last(format)
-        return PlainTextResponse(content=content, media_type=media_type)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail={"detail": "Export failed", "hint": str(exc), "action": "Run stability analysis first"}) from exc
-
-
-@router.get('/plasma_stability/export')
-def plasma_stability_export_legacy(format: str = Query('csv', pattern='^(csv|json)$')):
-    return plasma_stability_export(format)
 
 
 @router.get('/seed_rows')

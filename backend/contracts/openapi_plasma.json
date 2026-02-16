@@ -1,0 +1,14 @@
+{
+  "/api/plasma/columns": [
+    "get"
+  ],
+  "/api/plasma/health": [
+    "get"
+  ],
+  "/api/plasma/stability": [
+    "post"
+  ],
+  "/api/plasma/stability/export": [
+    "get"
+  ]
+}
