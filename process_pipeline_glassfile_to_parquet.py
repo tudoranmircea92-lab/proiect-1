@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -9,6 +11,7 @@ import pandas as pd
 
 
 _COMP_RE = re.compile(r"(\d+)")
+CACHE_VERSION = "v1"
 
 
 def _norm_material(value: object) -> Optional[str]:
@@ -51,6 +54,49 @@ def _parse_optoplex_time_to_day(series: pd.Series) -> pd.Series:
     )
     dt = pd.to_datetime(s, format="%Y%m%d%H%M%S", errors="coerce")
     return dt.dt.strftime("%Y-%m-%d")
+
+
+def _file_signature(path: Path) -> str:
+    st = path.stat()
+    return f"{st.st_size}:{st.st_mtime_ns}"
+
+
+def _cache_key(path: Path) -> str:
+    return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
+
+
+def _cache_paths(cache_dir: Path, source_path: Path) -> Tuple[Path, Path]:
+    key = _cache_key(source_path)
+    return cache_dir / f"{key}.pkl", cache_dir / f"{key}.json"
+
+
+def _load_cached_frame(cache_dir: Path, source_path: Path, extra: Dict[str, object]) -> Optional[pd.DataFrame]:
+    pkl_path, meta_path = _cache_paths(cache_dir, source_path)
+    if not pkl_path.exists() or not meta_path.exists():
+        return None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        expected = {
+            "version": CACHE_VERSION,
+            "signature": _file_signature(source_path),
+            "extra": extra,
+        }
+        if meta != expected:
+            return None
+        return pd.read_pickle(pkl_path)
+    except Exception:
+        return None
+
+
+def _store_cached_frame(cache_dir: Path, source_path: Path, df: pd.DataFrame, extra: Dict[str, object]) -> None:
+    pkl_path, meta_path = _cache_paths(cache_dir, source_path)
+    df.to_pickle(pkl_path)
+    meta = {
+        "version": CACHE_VERSION,
+        "signature": _file_signature(source_path),
+        "extra": extra,
+    }
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
 
 def _read_glass_csv(fp: Path) -> Optional[pd.DataFrame]:
@@ -284,6 +330,7 @@ def build_process_parquet(
     keep_material_only: bool,
     include_seg_gas: bool,
     include_material_gas: bool,
+    use_cache: bool,
 ) -> None:
     files = sorted(input_dir.rglob("*_glassFile.csv"))
     if not files:
@@ -291,10 +338,30 @@ def build_process_parquet(
 
     read_ok = 0
     skipped_bad = 0
+    cache_hits = 0
     detected_relevant: Set[int] = set()
     parts: List[pd.DataFrame] = []
 
+    cache_dir = output_file.parent / ".process_cache"
+    cache_extra = {
+        "keep_material_only": keep_material_only,
+        "include_seg_gas": include_seg_gas,
+        "include_material_gas": include_material_gas,
+    }
+    if use_cache:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
     for fp in files:
+        if use_cache:
+            cached = _load_cached_frame(cache_dir, fp, cache_extra)
+            if cached is not None:
+                parts.append(cached)
+                cache_hits += 1
+                read_ok += 1
+                comp_cols = [c for c in cached.columns if c.startswith("c") and "." in c]
+                detected_relevant.update({int(c.split(".", 1)[0][1:]) for c in comp_cols if c.split(".", 1)[0][1:].isdigit()})
+                continue
+
         raw = _read_glass_csv(fp)
         if raw is None:
             skipped_bad += 1
@@ -313,6 +380,8 @@ def build_process_parquet(
         read_ok += 1
         detected_relevant.update(relevant)
         parts.append(out_df)
+        if use_cache:
+            _store_cached_frame(cache_dir, fp, out_df, cache_extra)
 
     if not parts:
         raise SystemExit("No valid process rows produced. All files were skipped or empty.")
@@ -326,6 +395,8 @@ def build_process_parquet(
     merged.to_parquet(output_file, index=False)
 
     print(f"files ok / skipped: {read_ok} / {skipped_bad}")
+    if use_cache:
+        print(f"cache hits: {cache_hits} / {len(files)}")
     print(f"relevant compartments detected: {len(detected_relevant)}")
     print(f"final shape: {merged.shape}")
 
@@ -355,6 +426,7 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         help="Include material gas c{comp}.mainGas1..mainGas3 (+ legacy c{comp}.m1g..m3g) from available gas columns (default: true).",
     )
+    parser.add_argument("--no-cache", action="store_true", help="Disable per-file cache for repeated runs")
 
     args = parser.parse_args()
 
@@ -364,6 +436,7 @@ def main() -> None:
         keep_material_only=bool(args.keep_material_only),
         include_seg_gas=bool(args.include_seg_gas),
         include_material_gas=bool(args.include_material_gas),
+        use_cache=not args.no_cache,
     )
 
 

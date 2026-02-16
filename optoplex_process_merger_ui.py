@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 import threading
 from dataclasses import dataclass
@@ -58,6 +60,10 @@ class MergeConfig:
     year_filter: Optional[str]
     compression: str
     merge_how: str
+    use_cache: bool = True
+
+
+CACHE_VERSION = "v1"
 
 
 def normalize_device(raw: str) -> Optional[str]:
@@ -529,6 +535,51 @@ def _round_process_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _file_signature(path: Path) -> str:
+    st = path.stat()
+    return f"{st.st_size}:{st.st_mtime_ns}"
+
+
+def _cache_key(path: Path) -> str:
+    return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()
+
+
+def _cache_paths(cache_dir: Path, kind: str, source_path: Path) -> Tuple[Path, Path]:
+    key = _cache_key(source_path)
+    base = cache_dir / kind
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"{key}.pkl", base / f"{key}.json"
+
+
+def _load_cached_df(cache_dir: Path, kind: str, source_path: Path, extra: Optional[Dict[str, object]] = None) -> Optional[pd.DataFrame]:
+    pkl_path, meta_path = _cache_paths(cache_dir, kind, source_path)
+    if not pkl_path.exists() or not meta_path.exists():
+        return None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        expected = {
+            "version": CACHE_VERSION,
+            "signature": _file_signature(source_path),
+            "extra": extra or {},
+        }
+        if meta != expected:
+            return None
+        return pd.read_pickle(pkl_path)
+    except Exception:
+        return None
+
+
+def _store_cached_df(cache_dir: Path, kind: str, source_path: Path, df: pd.DataFrame, extra: Optional[Dict[str, object]] = None) -> None:
+    pkl_path, meta_path = _cache_paths(cache_dir, kind, source_path)
+    meta = {
+        "version": CACHE_VERSION,
+        "signature": _file_signature(source_path),
+        "extra": extra or {},
+    }
+    df.to_pickle(pkl_path)
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
 # ===========
 # Merge logic
 # ===========
@@ -546,10 +597,20 @@ def find_files(root: Path, pattern: str, recursive: bool, year: Optional[str]) -
     return sorted([p for p in iterator if p.is_file() and _matches_year(p, year)])
 
 
-def load_color_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0) -> pd.DataFrame:
+def load_color_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0, cache_dir: Optional[Path] = None, use_cache: bool = True) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
     total = max(len(files), 1)
+    cache_hits = 0
     for idx, fp in enumerate(files, start=1):
+        cache_extra = {"kind": "color"}
+        cached = _load_cached_df(cache_dir, "color", fp, cache_extra) if (use_cache and cache_dir) else None
+        if cached is not None:
+            rows.extend(cached.to_dict("records"))
+            cache_hits += 1
+            if progress:
+                progress(progress_base + progress_span * idx / total, f"Color parsing {idx}/{len(files)}")
+            continue
+
         raw_lines = fp.read_text(encoding="utf-8", errors="ignore").splitlines(True)
         file_ts, product, thickness_mm = extract_metadata(raw_lines)
         if not file_ts or not product:
@@ -564,8 +625,12 @@ def load_color_dataset(files: List[Path], log, progress=None, progress_base: flo
 
         dfm = pd.DataFrame([m.__dict__ for m in meas])
         dfm = dfm.groupby(["plate", "device", "position_mm"], as_index=False)[["L", "a", "b"]].mean()
+        file_rows: List[Dict[str, object]] = []
         for plate, dplate in dfm.groupby("plate", as_index=False):
-            rows.append(build_color_row(file_ts.date(), file_ts, int(plate), product, thickness_mm, dplate))
+            file_rows.append(build_color_row(file_ts.date(), file_ts, int(plate), product, thickness_mm, dplate))
+        rows.extend(file_rows)
+        if use_cache and cache_dir and file_rows:
+            _store_cached_df(cache_dir, "color", fp, pd.DataFrame(file_rows), cache_extra)
         if progress:
             progress(progress_base + progress_span * idx / total, f"Color parsing {idx}/{len(files)}")
 
@@ -575,19 +640,34 @@ def load_color_dataset(files: List[Path], log, progress=None, progress_base: flo
     out["plate"] = pd.to_numeric(out["plate"], errors="coerce").astype("Int64")
     out["day"] = pd.to_datetime(out["day"], errors="coerce").dt.date
     log(f"Color rows: {len(out)}")
+    if use_cache and cache_dir:
+        log(f"Color cache hits: {cache_hits}/{len(files)}")
     return out
 
 
-def load_process_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0) -> pd.DataFrame:
+def load_process_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0, cache_dir: Optional[Path] = None, use_cache: bool = True) -> pd.DataFrame:
     longs: List[pd.DataFrame] = []
     total = max(len(files), 1)
+    cache_hits = 0
+    cache_extra = {"kind": "process_long"}
     for idx, fp in enumerate(files, start=1):
+        cached = _load_cached_df(cache_dir, "process", fp, cache_extra) if (use_cache and cache_dir) else None
+        if cached is not None:
+            longs.append(cached)
+            cache_hits += 1
+            if progress:
+                progress(progress_base + progress_span * idx / total, f"Process parsing {idx}/{len(files)}")
+            continue
+
         raw = pd.read_csv(fp, sep=";", engine="c", low_memory=False)
         if not {"Location", "glassId", "optoplexGTime"}.issubset(raw.columns):
             if progress:
                 progress(progress_base + progress_span * idx / total, f"Process parsing {idx}/{len(files)}")
             continue
-        longs.append(_prepare_long(raw))
+        long_one = _prepare_long(raw)
+        longs.append(long_one)
+        if use_cache and cache_dir:
+            _store_cached_df(cache_dir, "process", fp, long_one, cache_extra)
         if progress:
             progress(progress_base + progress_span * idx / total, f"Process parsing {idx}/{len(files)}")
 
@@ -600,6 +680,8 @@ def load_process_dataset(files: List[Path], log, progress=None, progress_base: f
     comp_cols = [c for c in wide.columns if c.startswith("c") and "." in c]
     rel_comps = sorted({int(c.split(".", 1)[0][1:]) for c in comp_cols if c.split(".", 1)[0][1:].isdigit()})
     log(f"Relevant compartments in output: {len(rel_comps)}")
+    if use_cache and cache_dir:
+        log(f"Process cache hits: {cache_hits}/{len(files)}")
 
     wide["day"] = pd.to_datetime(wide["ts"], errors="coerce").dt.date
     wide["plate"] = pd.to_numeric(wide["plate"], errors="coerce").astype("Int64")
@@ -620,8 +702,25 @@ def run_merge(cfg: MergeConfig, log, progress=None) -> Path:
     if progress:
         progress(0.08, "Files scanned")
 
-    color_df = load_color_dataset(color_files, log, progress=progress, progress_base=0.08, progress_span=0.42)
-    proc_df = load_process_dataset(proc_files, log, progress=progress, progress_base=0.50, progress_span=0.40)
+    cache_dir = cfg.output_path.parent / ".merge_cache"
+    color_df = load_color_dataset(
+        color_files,
+        log,
+        progress=progress,
+        progress_base=0.08,
+        progress_span=0.42,
+        cache_dir=cache_dir,
+        use_cache=cfg.use_cache,
+    )
+    proc_df = load_process_dataset(
+        proc_files,
+        log,
+        progress=progress,
+        progress_base=0.50,
+        progress_span=0.40,
+        cache_dir=cache_dir,
+        use_cache=cfg.use_cache,
+    )
     if progress:
         progress(0.92, "Merging datasets")
 
@@ -761,6 +860,7 @@ class MergerApp:
             year_filter=self.year_filter.get().strip() or None,
             compression=self.comp_var.get(),
             merge_how=self.merge_var.get(),
+            use_cache=True,
         )
 
         if not cfg.optoplex_dir.exists() or not cfg.process_dir.exists() or cfg.output_path.is_dir():
@@ -796,6 +896,7 @@ def main() -> None:
     ap.add_argument("--compression", choices=["snappy", "zstd", "gzip"], default="snappy")
     ap.add_argument("--merge-how", choices=["inner", "left", "outer"], default="inner")
     ap.add_argument("--year", type=str, default="", help="Optional path-part year filter, ex: 2025")
+    ap.add_argument("--no-cache", action="store_true", help="Disable per-file parse cache for faster repeated runs")
     ap.add_argument("--no-recursive", action="store_true", help="Disable recursive file scan")
     args = ap.parse_args()
 
@@ -814,6 +915,7 @@ def main() -> None:
         year_filter=args.year or None,
         compression=args.compression,
         merge_how=args.merge_how,
+        use_cache=not args.no_cache,
     )
     run_merge(cfg, print)
 
