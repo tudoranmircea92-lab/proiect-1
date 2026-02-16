@@ -60,7 +60,9 @@ class MergeConfig:
     year_filter: Optional[str]
     compression: str
     merge_how: str
-    use_cache: bool = True
+    use_cache_read: bool = True
+    use_cache_write: bool = True
+    cache_dir: Optional[Path] = None
 
 
 CACHE_VERSION = "v1"
@@ -597,13 +599,13 @@ def find_files(root: Path, pattern: str, recursive: bool, year: Optional[str]) -
     return sorted([p for p in iterator if p.is_file() and _matches_year(p, year)])
 
 
-def load_color_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0, cache_dir: Optional[Path] = None, use_cache: bool = True) -> pd.DataFrame:
+def load_color_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0, cache_dir: Optional[Path] = None, use_cache_read: bool = True, use_cache_write: bool = True) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
     total = max(len(files), 1)
     cache_hits = 0
     for idx, fp in enumerate(files, start=1):
         cache_extra = {"kind": "color"}
-        cached = _load_cached_df(cache_dir, "color", fp, cache_extra) if (use_cache and cache_dir) else None
+        cached = _load_cached_df(cache_dir, "color", fp, cache_extra) if (use_cache_read and cache_dir) else None
         if cached is not None:
             rows.extend(cached.to_dict("records"))
             cache_hits += 1
@@ -629,7 +631,7 @@ def load_color_dataset(files: List[Path], log, progress=None, progress_base: flo
         for plate, dplate in dfm.groupby("plate", as_index=False):
             file_rows.append(build_color_row(file_ts.date(), file_ts, int(plate), product, thickness_mm, dplate))
         rows.extend(file_rows)
-        if use_cache and cache_dir and file_rows:
+        if use_cache_write and cache_dir and file_rows:
             _store_cached_df(cache_dir, "color", fp, pd.DataFrame(file_rows), cache_extra)
         if progress:
             progress(progress_base + progress_span * idx / total, f"Color parsing {idx}/{len(files)}")
@@ -640,18 +642,18 @@ def load_color_dataset(files: List[Path], log, progress=None, progress_base: flo
     out["plate"] = pd.to_numeric(out["plate"], errors="coerce").astype("Int64")
     out["day"] = pd.to_datetime(out["day"], errors="coerce").dt.date
     log(f"Color rows: {len(out)}")
-    if use_cache and cache_dir:
+    if use_cache_read and cache_dir:
         log(f"Color cache hits: {cache_hits}/{len(files)}")
     return out
 
 
-def load_process_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0, cache_dir: Optional[Path] = None, use_cache: bool = True) -> pd.DataFrame:
+def load_process_dataset(files: List[Path], log, progress=None, progress_base: float = 0.0, progress_span: float = 0.0, cache_dir: Optional[Path] = None, use_cache_read: bool = True, use_cache_write: bool = True) -> pd.DataFrame:
     longs: List[pd.DataFrame] = []
     total = max(len(files), 1)
     cache_hits = 0
     cache_extra = {"kind": "process_long"}
     for idx, fp in enumerate(files, start=1):
-        cached = _load_cached_df(cache_dir, "process", fp, cache_extra) if (use_cache and cache_dir) else None
+        cached = _load_cached_df(cache_dir, "process", fp, cache_extra) if (use_cache_read and cache_dir) else None
         if cached is not None:
             longs.append(cached)
             cache_hits += 1
@@ -666,7 +668,7 @@ def load_process_dataset(files: List[Path], log, progress=None, progress_base: f
             continue
         long_one = _prepare_long(raw)
         longs.append(long_one)
-        if use_cache and cache_dir:
+        if use_cache_write and cache_dir:
             _store_cached_df(cache_dir, "process", fp, long_one, cache_extra)
         if progress:
             progress(progress_base + progress_span * idx / total, f"Process parsing {idx}/{len(files)}")
@@ -680,7 +682,7 @@ def load_process_dataset(files: List[Path], log, progress=None, progress_base: f
     comp_cols = [c for c in wide.columns if c.startswith("c") and "." in c]
     rel_comps = sorted({int(c.split(".", 1)[0][1:]) for c in comp_cols if c.split(".", 1)[0][1:].isdigit()})
     log(f"Relevant compartments in output: {len(rel_comps)}")
-    if use_cache and cache_dir:
+    if use_cache_read and cache_dir:
         log(f"Process cache hits: {cache_hits}/{len(files)}")
 
     wide["day"] = pd.to_datetime(wide["ts"], errors="coerce").dt.date
@@ -702,7 +704,10 @@ def run_merge(cfg: MergeConfig, log, progress=None) -> Path:
     if progress:
         progress(0.08, "Files scanned")
 
-    cache_dir = cfg.output_path.parent / ".merge_cache"
+    cache_dir = cfg.cache_dir or (cfg.output_path.parent / ".merge_cache")
+    if cfg.use_cache_read or cfg.use_cache_write:
+        log(f"Cache dir: {cache_dir}")
+        log(f"Cache read/write: {cfg.use_cache_read}/{cfg.use_cache_write}")
     color_df = load_color_dataset(
         color_files,
         log,
@@ -710,7 +715,8 @@ def run_merge(cfg: MergeConfig, log, progress=None) -> Path:
         progress_base=0.08,
         progress_span=0.42,
         cache_dir=cache_dir,
-        use_cache=cfg.use_cache,
+        use_cache_read=cfg.use_cache_read,
+        use_cache_write=cfg.use_cache_write,
     )
     proc_df = load_process_dataset(
         proc_files,
@@ -719,7 +725,8 @@ def run_merge(cfg: MergeConfig, log, progress=None) -> Path:
         progress_base=0.50,
         progress_span=0.40,
         cache_dir=cache_dir,
-        use_cache=cfg.use_cache,
+        use_cache_read=cfg.use_cache_read,
+        use_cache_write=cfg.use_cache_write,
     )
     if progress:
         progress(0.92, "Merging datasets")
@@ -763,6 +770,9 @@ class MergerApp:
         self.comp_var = StringVar(value="snappy")
         self.merge_var = StringVar(value="inner")
         self.recursive_var = IntVar(value=1)
+        self.cache_read_var = IntVar(value=1)
+        self.cache_write_var = IntVar(value=1)
+        self.cache_dir_var = StringVar(value="")
         self.progress_var = DoubleVar(value=0.0)
         self.status_var = StringVar(value="Ready")
         self.run_btn: Optional[Button] = None
@@ -783,12 +793,19 @@ class MergerApp:
         self._build_row(top, "Optoplex folder", self.opt_dir, self._pick_opt_dir)
         self._build_row(top, "Glass/process folder", self.proc_dir, self._pick_proc_dir)
         self._build_row(top, "Output file", self.out_path, self._pick_out_file)
+        self._build_row(top, "Cache folder (optional)", self.cache_dir_var, self._pick_cache_dir)
 
         row = Frame(top)
         row.pack(fill=BOTH, padx=8, pady=4)
         Label(row, text="Year filter (optional)", width=22, anchor=W).pack(side=LEFT)
         Entry(row, textvariable=self.year_filter, width=12).pack(side=LEFT, padx=6)
         Checkbutton(row, text="Recursive scan (rglob)", variable=self.recursive_var).pack(side=LEFT, padx=12)
+
+        row_cache = Frame(top)
+        row_cache.pack(fill=BOTH, padx=8, pady=4)
+        Label(row_cache, text="Cache options", width=22, anchor=W).pack(side=LEFT)
+        Checkbutton(row_cache, text="Use cache (read)", variable=self.cache_read_var).pack(side=LEFT, padx=6)
+        Checkbutton(row_cache, text="Save cache (write)", variable=self.cache_write_var).pack(side=LEFT, padx=6)
 
         row2 = Frame(top)
         row2.pack(fill=BOTH, padx=8, pady=4)
@@ -827,6 +844,11 @@ class MergerApp:
         if p:
             self.out_path.set(p)
 
+    def _pick_cache_dir(self):
+        d = filedialog.askdirectory(title="Select cache folder")
+        if d:
+            self.cache_dir_var.set(d)
+
     def _log(self, msg: str):
         self.log_box.insert(END, msg + "\n")
         self.log_box.see(END)
@@ -851,6 +873,7 @@ class MergerApp:
             messagebox.showerror("Invalid input", "Completează folderele de input și fișierul de output.")
             return
 
+        cache_dir_raw = self.cache_dir_var.get().strip()
         cfg = MergeConfig(
             optoplex_dir=Path(opt_dir_raw),
             process_dir=Path(proc_dir_raw),
@@ -860,11 +883,16 @@ class MergerApp:
             year_filter=self.year_filter.get().strip() or None,
             compression=self.comp_var.get(),
             merge_how=self.merge_var.get(),
-            use_cache=True,
+            use_cache_read=bool(self.cache_read_var.get()),
+            use_cache_write=bool(self.cache_write_var.get()),
+            cache_dir=Path(cache_dir_raw) if cache_dir_raw else None,
         )
 
         if not cfg.optoplex_dir.exists() or not cfg.process_dir.exists() or cfg.output_path.is_dir():
             messagebox.showerror("Invalid input", "Verifică folderele de input și fișierul de output.")
+            return
+        if cfg.cache_dir and cfg.cache_dir.exists() and not cfg.cache_dir.is_dir():
+            messagebox.showerror("Invalid input", "Calea de cache trebuie să fie un folder valid.")
             return
 
         self._set_running(True)
@@ -896,7 +924,9 @@ def main() -> None:
     ap.add_argument("--compression", choices=["snappy", "zstd", "gzip"], default="snappy")
     ap.add_argument("--merge-how", choices=["inner", "left", "outer"], default="inner")
     ap.add_argument("--year", type=str, default="", help="Optional path-part year filter, ex: 2025")
-    ap.add_argument("--no-cache", action="store_true", help="Disable per-file parse cache for faster repeated runs")
+    ap.add_argument("--cache-dir", type=str, default="", help="Optional cache directory path")
+    ap.add_argument("--no-cache-read", action="store_true", help="Disable reading from cache")
+    ap.add_argument("--no-cache-write", action="store_true", help="Disable writing cache")
     ap.add_argument("--no-recursive", action="store_true", help="Disable recursive file scan")
     args = ap.parse_args()
 
@@ -915,7 +945,9 @@ def main() -> None:
         year_filter=args.year or None,
         compression=args.compression,
         merge_how=args.merge_how,
-        use_cache=not args.no_cache,
+        use_cache_read=not args.no_cache_read,
+        use_cache_write=not args.no_cache_write,
+        cache_dir=Path(args.cache_dir) if args.cache_dir else None,
     )
     run_merge(cfg, print)
 

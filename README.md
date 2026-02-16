@@ -31,7 +31,7 @@ python optoplex_process_merger_ui.py \
   --compression snappy \
   --merge-how inner \
   --year 2025
-  # opțional: --no-cache
+  # opțional: --cache-dir /date/output/.merge_cache --no-cache-read --no-cache-write
 ```
 
 ## Process pipeline (minimal, ML-ready)
@@ -59,4 +59,4 @@ Valorile numerice process sunt rotunjite la max. 2 zecimale, cu excepția `actVa
 ## Cache pentru volume mari
 - `optoplex_process_merger_ui.py` salvează cache per fișier în `<output_dir>/.merge_cache` pentru parsing color/process.
 - `process_pipeline_glassfile_to_parquet.py` salvează cache per fișier în `<output_dir>/.process_cache`.
-- Pentru a dezactiva cache-ul folosește `--no-cache`.
+- Pentru control granular folosește `--cache-dir`, `--no-cache-read`, `--no-cache-write` (CLI) sau opțiunile din UI (Use cache / Save cache + folder).
