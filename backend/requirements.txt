@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+scikit-learn
+pandas
+fastparquet
+python-multipart
+openpyxl
+numpy
+pyarrow
+joblib
+python-dotenv
