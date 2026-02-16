@@ -47,3 +47,14 @@ async def json_guard_middleware(request, call_next):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.on_event("startup")
+def _startup_log_routes():
+    print("[startup] routes:")
+    for r in app.routes:
+        try:
+            methods = ",".join(sorted(getattr(r, "methods", []) or []))
+            print(f" - {methods:10s} {r.path}")
+        except Exception:
+            pass

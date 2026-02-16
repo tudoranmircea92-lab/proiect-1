@@ -4,7 +4,7 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Too
 import { Accordion, Alert, Badge, Button, Card, Input, Progress, Select, Skeleton } from '../components/ui'
 import { api } from '../lib/api'
 import { useDataset } from '../lib/datasetContext'
-import { runJobWithMeta } from '../lib/jobs'
+import { waitForJob } from '../lib/jobs'
 
 function fmt(v: any, d = 4) {
   return v === null || v === undefined || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(d)
@@ -63,7 +63,7 @@ export function PlasmaStabilityPage() {
     setLoading(true)
     setErrorObj(null)
     try {
-      const { jobId, result } = await runJobWithMeta('/api/plasma/stability', {
+      const payload = {
         dataset_id: datasetId,
         timestamp_col: 'auto',
         from: fromTs,
@@ -78,9 +78,25 @@ export function PlasmaStabilityPage() {
           date_from: globalFilters.dateFrom || null,
           date_to: globalFilters.dateTo || null,
         },
-      }, ({ progress, stage }) => { setProgress(progress); setStage(stage) })
-      setJobId(jobId)
-      setResult(result)
+      }
+
+      const start = await api.post('/api/plasma/stability', payload)
+      const maybeJobId = start?.data?.job_id
+      if (maybeJobId) {
+        setStage('Filtering rows')
+        setProgress(15)
+        const result = await waitForJob(maybeJobId, ({ progress, stage }) => {
+          setProgress(progress)
+          setStage(stage)
+        })
+        setJobId(maybeJobId)
+        setResult(result)
+      } else {
+        setJobId('')
+        setStage('Done')
+        setProgress(100)
+        setResult(start.data)
+      }
     } catch (e: any) {
       const status = e?.response?.status ?? null
       const url = `${e?.config?.baseURL || ''}${e?.config?.url || '/api/plasma/stability'}`
