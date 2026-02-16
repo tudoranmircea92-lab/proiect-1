@@ -36,6 +36,13 @@ def _extract_compartment(location: object) -> Optional[int]:
         return None
 
 
+def _first_existing_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
 def _parse_optoplex_time_to_day(series: pd.Series) -> pd.Series:
     s = (
         series.astype(str)
@@ -125,9 +132,15 @@ def _build_file_plate_frame(
                 working[src] = pd.to_numeric(raw[src], errors="coerce")
 
     if include_material_gas:
-        for src in ["Ar_flow", "N2_flow", "O2_flow"]:
-            if src in raw.columns:
-                working[src] = pd.to_numeric(raw[src], errors="coerce")
+        gas_sources = {
+            "mainGas1": ["Ar_flow", "mainGas1", "mainGas1Flow", "actMainGas1Flow"],
+            "mainGas2": ["N2_flow", "mainGas2", "mainGas2Flow", "actMainGas2Flow"],
+            "mainGas3": ["O2_flow", "mainGas3", "mainGas3Flow", "actMainGas3Flow"],
+        }
+        for tgt, candidates in gas_sources.items():
+            src = _first_existing_column(raw, candidates)
+            if src:
+                working[tgt] = pd.to_numeric(raw[src], errors="coerce")
 
     working = working.dropna(subset=["day", "plate", "comp"]).copy()
     if working.empty:
@@ -173,10 +186,12 @@ def _build_file_plate_frame(
                     feature_map[src] = f"c{comp}.s{i}g"
 
         if include_material_gas:
-            gas_map = {"Ar_flow": "m1g", "N2_flow": "m2g", "O2_flow": "m3g"}
+            gas_map = {"mainGas1": "mainGas1", "mainGas2": "mainGas2", "mainGas3": "mainGas3"}
+            legacy_alias = {"mainGas1": "m1g", "mainGas2": "m2g", "mainGas3": "m3g"}
             for src, target in gas_map.items():
                 if src in dcomp.columns:
                     feature_map[src] = f"c{comp}.{target}"
+                    feature_map[f"{src}__legacy"] = f"c{comp}.{legacy_alias[src]}"
 
         feature_map["actTargetMaterial1"] = f"c{comp}.actTargetMaterial1"
         if "actTarget1KWH" in dcomp.columns:
@@ -188,6 +203,13 @@ def _build_file_plate_frame(
                 feature_map["actTargetMaterial2"] = f"c{comp}.actTargetMaterial2"
         if "actTarget2KWH" in dcomp.columns and has_real_t2:
             feature_map["actTarget2KWH"] = f"c{comp}.kwh2"
+
+        # Expand legacy aliases to duplicate main gas columns in output.
+        for synthetic_key in [k for k in feature_map if k.endswith("__legacy")]:
+            src = synthetic_key.replace("__legacy", "")
+            if src in dcomp.columns:
+                dcomp = dcomp.copy()
+                dcomp[synthetic_key] = dcomp[src]
 
         use_cols = [c for c in feature_map if c in dcomp.columns]
         if not use_cols:
@@ -331,7 +353,7 @@ def main() -> None:
         "--include-material-gas",
         default=True,
         action=argparse.BooleanOptionalAction,
-        help="Include material gas c{comp}.m1g..m3g from Ar_flow/N2_flow/O2_flow if available (default: true).",
+        help="Include material gas c{comp}.mainGas1..mainGas3 (+ legacy c{comp}.m1g..m3g) from available gas columns (default: true).",
     )
 
     args = parser.parse_args()

@@ -246,6 +246,13 @@ def _safe_int64(x: pd.Series) -> pd.Series:
     return pd.to_numeric(x, errors="coerce").astype("Int64")
 
 
+def _first_existing_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
 def _compute_ramp_features(seg_mat: np.ndarray, num_ramps: np.ndarray) -> Dict[str, np.ndarray]:
     n = seg_mat.shape[0]
     R = np.clip(num_ramps, 0, 11).astype(np.int32)
@@ -353,11 +360,19 @@ def _prepare_long(df: pd.DataFrame) -> pd.DataFrame:
         if src in df.columns:
             base[f"s{i}g"] = _safe_float32(df[src])
 
-    # per-comp material gas
-    gas_map = {"Ar_flow": "m1g", "N2_flow": "m2g", "O2_flow": "m3g"}
-    for src, tgt in gas_map.items():
-        if src in df.columns:
-            base[tgt] = _safe_float32(df[src])
+    # per-comp material/main gas (supports multiple source naming conventions)
+    gas_sources = {
+        "mainGas1": ["Ar_flow", "mainGas1", "mainGas1Flow", "actMainGas1Flow"],
+        "mainGas2": ["N2_flow", "mainGas2", "mainGas2Flow", "actMainGas2Flow"],
+        "mainGas3": ["O2_flow", "mainGas3", "mainGas3Flow", "actMainGas3Flow"],
+    }
+    legacy_alias = {"mainGas1": "m1g", "mainGas2": "m2g", "mainGas3": "m3g"}
+    for tgt, candidates in gas_sources.items():
+        src = _first_existing_column(df, candidates)
+        if src:
+            v = _safe_float32(df[src])
+            base[tgt] = v
+            base[legacy_alias[tgt]] = v
 
     # target info
     if "actTargetMaterial1" in df.columns:
@@ -415,7 +430,7 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     d = d_all[d_all["comp"].isin(relevant)].copy()
 
     # Build per-comp values (minimal set)
-    keep_candidates = ["pwr", "voltage", "current"] + [f"s{i}g" for i in range(1, 12)] + ["m1g", "m2g", "m3g", "actTargetMaterial1", "kwh1", "actTargetMaterial2", "kwh2"]
+    keep_candidates = ["pwr", "voltage", "current"] + [f"s{i}g" for i in range(1, 12)] + ["mainGas1", "mainGas2", "mainGas3", "m1g", "m2g", "m3g", "actTargetMaterial1", "kwh1", "actTargetMaterial2", "kwh2"]
     value_cols = [c for c in keep_candidates if c in d.columns]
 
     if not value_cols:
@@ -450,7 +465,7 @@ def _pivot_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     out = global_df.merge(wide, on=["ts", "plate"], how="left")
 
     # generic filter: keep only allowed c{comp}.<minimal>
-    allowed_suffix = set(["pwr", "voltage", "current", "m1g", "m2g", "m3g", "actTargetMaterial1", "kwh1", "actTargetMaterial2", "kwh2"] + [f"s{i}g" for i in range(1, 12)])
+    allowed_suffix = set(["pwr", "voltage", "current", "mainGas1", "mainGas2", "mainGas3", "m1g", "m2g", "m3g", "actTargetMaterial1", "kwh1", "actTargetMaterial2", "kwh2"] + [f"s{i}g" for i in range(1, 12)])
     keep_cols = []
     for c in out.columns:
         if not c.startswith("c") or "." not in c:
