@@ -701,12 +701,20 @@ def _format_for_ml(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize merged dataset for ML-friendly training/serving use."""
     out = df.copy()
 
+    # Canonical time column requested by downstream consumers: `data` timestamp.
+    data_ts = pd.to_datetime(out["ts"], errors="coerce").dt.floor("min") if "ts" in out.columns else pd.Series(pd.NaT, index=out.index)
     if "day" in out.columns:
         day_dt = pd.to_datetime(out["day"], errors="coerce")
-        out["day"] = day_dt.dt.date
-        out["dayOfWeek"] = day_dt.dt.dayofweek.astype("Int64")
-        out["month"] = day_dt.dt.month.astype("Int64")
-        out["weekOfYear"] = day_dt.dt.isocalendar().week.astype("Int64")
+        data_ts = data_ts.fillna(day_dt)
+    out["data"] = data_ts
+
+    data_dt = pd.to_datetime(out["data"], errors="coerce")
+    out["dayOfWeek"] = data_dt.dt.dayofweek.astype("Int64")
+    out["month"] = data_dt.dt.month.astype("Int64")
+    out["weekOfYear"] = data_dt.dt.isocalendar().week.astype("Int64")
+
+    if "day" in out.columns:
+        out = out.drop(columns=["day"])
 
     if "plate" in out.columns:
         out["plate"] = pd.to_numeric(out["plate"], errors="coerce").astype("Int64")
@@ -716,7 +724,7 @@ def _format_for_ml(df: pd.DataFrame) -> pd.DataFrame:
         out[c] = out[c].astype("string")
 
     # Keep a stable, deterministic column order for reproducible ML pipelines.
-    priority = [c for c in ["day", "plate", "file_ts", "product", "dayOfWeek", "month", "weekOfYear"] if c in out.columns]
+    priority = [c for c in ["data", "plate", "ts", "file_ts", "product", "dayOfWeek", "month", "weekOfYear"] if c in out.columns]
     rest = sorted([c for c in out.columns if c not in priority])
     out = out[priority + rest]
     return out

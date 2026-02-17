@@ -55,7 +55,7 @@ Debitele de material/main gas sunt disponibile per compartiment și ca `cX.mainG
 
 Valorile numerice process sunt rotunjite la max. 2 zecimale, cu excepția `actVacuumPressure` (păstrată la precizie completă).
 
-Implicit, exportul final din merger aplică și un pas **ML-ready**: adaugă `dayOfWeek`, `month`, `weekOfYear`, normalizează tipurile cheie și ordonează stabil coloanele (poți dezactiva cu `--no-ml-ready` sau debifând checkbox-ul din UI).
+Implicit, exportul final din merger aplică și un pas **ML-ready**: creează coloana `data` ca timestamp (`YYYY-MM-DD HH:MM:SS`, ex. `2026-02-16 00:00:00`, `2026-02-16 00:01:00`), adaugă `dayOfWeek`, `month`, `weekOfYear`, normalizează tipurile cheie și ordonează stabil coloanele (poți dezactiva cu `--no-ml-ready` sau debifând checkbox-ul din UI).
 
 
 ## Cache pentru volume mari
