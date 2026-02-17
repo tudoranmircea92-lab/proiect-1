@@ -118,3 +118,11 @@ def test_plasma_stability_v2_selected_cathode_returns_only_selected_series():
     assert one_res.status_code == 200
     one_keys = list((one_res.json().get('series_by_cathode') or {}).keys())
     assert one_keys == [cath]
+
+
+def test_plasma_columns_includes_latest_ts_defaults():
+    res = client.get('/api/plasma/columns')
+    assert res.status_code == 200
+    body = res.json()
+    assert body.get('defaults', {}).get('latest_ts') is not None
+    assert 'min_ts' in body.get('defaults', {})

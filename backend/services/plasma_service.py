@@ -73,14 +73,33 @@ class PlasmaService:
         return PlasmaService._fallback_dataframe()
 
     @staticmethod
+    def _resolve_time_column(df: pd.DataFrame) -> str | None:
+        svc = PlasmaStabilityService()
+        req = AppPlasmaStabilityRequest(from_ts="1970-01-01T00:00:00", to_ts="1970-01-01T00:00:01", timestamp_col="auto")
+        return svc._resolve_ts_col(df, req)
+
+    @staticmethod
+    def _time_bounds(df: pd.DataFrame, ts_col: str | None) -> tuple[str | None, str | None]:
+        if not ts_col or ts_col not in df.columns:
+            return None, None
+        ts = pd.to_datetime(df[ts_col], errors="coerce")
+        ts = ts.dropna()
+        if ts.empty:
+            return None, None
+        return ts.min().isoformat(), ts.max().isoformat()
+
+    @staticmethod
     def columns() -> PlasmaColumnsResponse:
         df = PlasmaService._load_df()
-        time_column = "file_ts" if "file_ts" in df.columns else "ts" if "ts" in df.columns else "file_ts"
+        time_column = PlasmaService._resolve_time_column(df) or "file_ts"
+        min_ts, latest_ts = PlasmaService._time_bounds(df, time_column)
         defaults = {
             "active_threshold": 0.0,
             "aggregation": "mean",
             "group_by": ["device", "plate"],
             "thresholds": PLASMA_SCORE_THRESHOLDS,
+            "min_ts": min_ts,
+            "latest_ts": latest_ts,
         }
         return PlasmaColumnsResponse(
             time_column=time_column,
@@ -90,9 +109,11 @@ class PlasmaService:
 
     @staticmethod
     def _to_app_req(payload: PlasmaStabilityRequest) -> AppPlasmaStabilityRequest:
+        timestamp_col = "auto"
         return AppPlasmaStabilityRequest(
             from_ts=payload.from_ts.isoformat(),
             to_ts=payload.to_ts.isoformat(),
+            timestamp_col=timestamp_col,
             active_threshold=payload.active_threshold,
             agg=payload.aggregation,
             filter={

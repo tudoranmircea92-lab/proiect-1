@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Alert, Badge, Card, Select } from '../components/ui'
-import { stabilityV2 } from '../api/plasma'
+import { columns, stabilityV2 } from '../api/plasma'
 import { useDataset } from '../lib/datasetContext'
 
 const RANGES = ['1h', '6h', '24h', '7d'] as const
+
+function computeFromTo(toIso: string, preset: (typeof RANGES)[number]) {
+  const hrs = { '1h': 1, '6h': 6, '24h': 24, '7d': 24 * 7 }[preset]
+  const to = new Date(toIso)
+  const from = new Date(to.getTime() - hrs * 3600 * 1000)
+  return { from: from.toISOString(), to: to.toISOString() }
+}
 
 function statusClass(s: string) {
   if (s === 'Normal') return 'bg-emerald-100 text-emerald-700'
@@ -20,16 +27,24 @@ export function PlasmaStabilityV2Page() {
   const [data, setData] = useState<any>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [toTs, setToTs] = useState<string | null>(null)
+  const [fromTs, setFromTs] = useState<string | null>(null)
 
-  const load = async (cath = cathode, preset = range) => {
+  const load = async (cath = cathode, preset = range, anchorTo: string | null = toTs) => {
     if (!datasetId) return
     setLoading(true); setError('')
     try {
-      const now = new Date()
+      let effectiveTo = anchorTo
+      if (!effectiveTo) {
+        const meta = await columns()
+        effectiveTo = meta?.data?.defaults?.latest_ts || new Date().toISOString()
+      }
+      const w = computeFromTo(String(effectiveTo), preset)
+      setToTs(w.to); setFromTs(w.from)
       const payload: any = {
         dataset_id: datasetId,
-        from: new Date(now.getTime() - 24 * 3600 * 1000).toISOString(),
-        to: now.toISOString(),
+        from: w.from,
+        to: w.to,
         aggregation: 'mean',
         active_threshold: 0,
         cathode: cath,
@@ -42,7 +57,20 @@ export function PlasmaStabilityV2Page() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load('all', '24h') }, [datasetId])
+  useEffect(() => {
+    if (!datasetId) return
+    ;(async () => {
+      try {
+        const meta = await columns()
+        const latest = meta?.data?.defaults?.latest_ts || new Date().toISOString()
+        const w = computeFromTo(latest, '24h')
+        setRange('24h'); setCathode('all'); setToTs(w.to); setFromTs(w.from)
+        await load('all', '24h', latest)
+      } catch {
+        await load('all', '24h', new Date().toISOString())
+      }
+    })()
+  }, [datasetId])
 
   const cathodes = useMemo(() => ['all', ...Object.keys(data?.series_by_cathode || {})], [data])
 
@@ -69,12 +97,12 @@ export function PlasmaStabilityV2Page() {
         <div className='min-w-36'>
           <label className='text-xs text-slate-600'>Range</label>
           <div className='flex rounded-xl border border-blue-200 bg-blue-50 p-1 gap-1'>
-            {RANGES.map((r) => <button key={r} className={`px-3 py-1 rounded-lg text-sm ${range === r ? 'bg-white text-blue-700 shadow' : 'text-slate-600'}`} onClick={() => { setRange(r); load(cathode, r) }}>{r}</button>)}
+            {RANGES.map((r) => <button key={r} className={`px-3 py-1 rounded-lg text-sm ${range === r ? 'bg-white text-blue-700 shadow' : 'text-slate-600'}`} onClick={() => { setRange(r); load(cathode, r, toTs) }}>{r}</button>)}
           </div>
         </div>
         <div className='min-w-40'>
           <label className='text-xs text-slate-600'>Cathode</label>
-          <Select value={cathode} onChange={(e: any) => { setCathode(e.target.value); load(e.target.value, range) }}>
+          <Select value={cathode} onChange={(e: any) => { setCathode(e.target.value); load(e.target.value, range, toTs) }}>
             {cathodes.map((c) => <option key={c} value={c}>{c}</option>)}
           </Select>
         </div>
@@ -82,6 +110,7 @@ export function PlasmaStabilityV2Page() {
           thresholds: Normal ≤ {data.thresholds.normal_max}, Medium ≤ {data.thresholds.medium_max}, Critical &gt; {data.thresholds.medium_max}
         </div>}
       </div>
+      {(fromTs && toTs) && <p className='text-xs text-slate-500'>Effective window: {fromTs} → {toTs}</p>}
       {error && <Alert variant='destructive'>{error}</Alert>}
       {loading && <p className='text-sm text-slate-500'>Loading…</p>}
     </Card>
