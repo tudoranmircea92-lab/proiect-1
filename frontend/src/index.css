@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { @apply text-slate-800; }
+.card { @apply bg-white rounded-xl shadow-sm border border-slate-200 p-5; }
+.label { @apply text-sm text-slate-600; }
+.input { @apply border border-slate-300 rounded-md px-3 py-2 w-full; }
+.btn { @apply bg-blue-600 text-white rounded-md px-4 py-2 hover:bg-blue-700 disabled:bg-slate-400; }
+.btn-secondary { @apply bg-white text-slate-700 border border-slate-300 rounded-md px-3 py-2 hover:bg-slate-100; }

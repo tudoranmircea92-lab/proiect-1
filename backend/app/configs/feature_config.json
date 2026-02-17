@@ -1,0 +1,22 @@
+{
+  "power": "^c\\d+\\.pwr$",
+  "main_gas": "^c\\d+\\.mainGas[123]$",
+  "main_gas_alt": "^c\\d+\\.m[123]g$",
+  "segment_gas": "^c\\d+\\.s(1|2|3|4|5|6|7|8|9|10|11)g$",
+  "context_allowlist_patterns": [
+    "vacuum|pressure",
+    "life|target.*life|remaining.*life|erosion|usage",
+    "sigma|std|stdev|variance",
+    "current|voltage|power",
+    "freq|frequency",
+    "temperature|temp",
+    "speed",
+    "thickness|glassThickness",
+    "kwh|energy"
+  ],
+  "targets": [
+    "L_RG_mean", "L_RG_std", "a_RG_mean", "a_RG_std", "b_RG_mean", "b_RG_std",
+    "L_RF_mean", "L_RF_std", "a_RF_mean", "a_RF_std", "b_RF_mean", "b_RF_std",
+    "L_T_mean", "L_T_std", "a_T_mean", "a_T_std", "b_T_mean", "b_T_std"
+  ]
+}
