@@ -697,16 +697,49 @@ def load_process_dataset(files: List[Path], log, progress=None, progress_base: f
     return wide
 
 
+def _parse_mixed_datetime(series: pd.Series) -> pd.Series:
+    """Parse mixed datetime strings with support for dd-mm-yy inputs."""
+    s = series.astype("string").str.strip()
+    out = pd.to_datetime(s, errors="coerce")
+
+    # Recover common dd-mm-yy / dd-mm-yyyy formats (often exported from legacy tools)
+    mask = out.isna() & s.notna()
+    if mask.any():
+        s2 = s[mask]
+        parsed = pd.to_datetime(s2, format="%d-%m-%y %H:%M", errors="coerce")
+        miss = parsed.isna()
+        if miss.any():
+            parsed2 = pd.to_datetime(s2[miss], format="%d-%m-%y %H:%M:%S", errors="coerce")
+            parsed.loc[miss] = parsed2
+        miss = parsed.isna()
+        if miss.any():
+            parsed3 = pd.to_datetime(s2[miss], format="%d-%m-%Y %H:%M", errors="coerce")
+            parsed.loc[miss] = parsed3
+        miss = parsed.isna()
+        if miss.any():
+            parsed4 = pd.to_datetime(s2[miss], format="%d-%m-%Y %H:%M:%S", errors="coerce")
+            parsed.loc[miss] = parsed4
+        out.loc[mask] = parsed
+
+    return out
+
+
 def _format_for_ml(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize merged dataset for ML-friendly training/serving use."""
     out = df.copy()
 
     # Canonical time column requested by downstream consumers: `data` timestamp.
-    data_ts = pd.to_datetime(out["ts"], errors="coerce").dt.floor("min") if "ts" in out.columns else pd.Series(pd.NaT, index=out.index)
+    data_ts = _parse_mixed_datetime(out["ts"]).dt.floor("min") if "ts" in out.columns else pd.Series(pd.NaT, index=out.index)
     if "day" in out.columns:
-        day_dt = pd.to_datetime(out["day"], errors="coerce")
+        day_dt = _parse_mixed_datetime(out["day"])
         data_ts = data_ts.fillna(day_dt)
     out["data"] = data_ts
+
+    # Normalize other datetime columns for consistent ML export format.
+    if "ts" in out.columns:
+        out["ts"] = _parse_mixed_datetime(out["ts"]).dt.floor("min")
+    if "file_ts" in out.columns:
+        out["file_ts"] = _parse_mixed_datetime(out["file_ts"]).dt.floor("min")
 
     data_dt = pd.to_datetime(out["data"], errors="coerce")
     out["dayOfWeek"] = data_dt.dt.dayofweek.astype("Int64")
@@ -723,10 +756,21 @@ def _format_for_ml(df: pd.DataFrame) -> pd.DataFrame:
     for c in categorical_cols:
         out[c] = out[c].astype("string")
 
+    # Force ascending chronology (00:00 -> 23:59) for ML sequences.
+    sort_cols = [c for c in ["data", "plate"] if c in out.columns]
+    if sort_cols:
+        out = out.sort_values(sort_cols, ascending=True, na_position="last").reset_index(drop=True)
+
     # Keep a stable, deterministic column order for reproducible ML pipelines.
     priority = [c for c in ["data", "plate", "ts", "file_ts", "product", "dayOfWeek", "month", "weekOfYear"] if c in out.columns]
     rest = sorted([c for c in out.columns if c not in priority])
     out = out[priority + rest]
+
+    # Canonical display format for CSV exports.
+    for c in ["data", "ts", "file_ts"]:
+        if c in out.columns:
+            out[c] = pd.to_datetime(out[c], errors="coerce").dt.strftime("%Y-%m-%d %H:%M:%S")
+
     return out
 
 
@@ -771,7 +815,7 @@ def run_merge(cfg: MergeConfig, log, progress=None) -> Path:
     merged = merged.sort_values(["day", "plate"]).reset_index(drop=True)
     if cfg.ml_ready:
         merged = _format_for_ml(merged)
-        log("Applied ML-ready formatting (types + calendar features + stable column order).")
+        log("Applied ML-ready formatting (canonical timestamps + ascending time sort + stable column order).")
     log(f"Merged rows: {len(merged)}")
 
     out = cfg.output_path
