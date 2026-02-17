@@ -126,3 +126,18 @@ def test_plasma_columns_includes_latest_ts_defaults():
     body = res.json()
     assert body.get('defaults', {}).get('latest_ts') is not None
     assert 'min_ts' in body.get('defaults', {})
+
+
+def test_plasma_stability_v2_accepts_filters_and_custom_window():
+    payload = {
+        'from_ts': '2026-02-10T00:00:00',
+        'to_ts': '2026-02-16T00:00:00',
+        'aggregation': 'mean',
+        'cathode': 'all',
+        'filters': {'product': ['PLT XN 4mm'], 'thickness_mm': [4.0]},
+    }
+    res = client.post('/api/plasma/stability_v2', json=payload)
+    assert res.status_code == 200
+    body = res.json()
+    assert isinstance(body.get('scores'), list)
+    assert body.get('window', {}).get('from_ts', '').startswith('2026-02-10')

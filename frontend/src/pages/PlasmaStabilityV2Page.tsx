@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { Alert, Badge, Card, Select } from '../components/ui'
+import { Alert, Badge, Button, Card, Input, Select } from '../components/ui'
 import { columns, stabilityV2 } from '../api/plasma'
 import { useDataset } from '../lib/datasetContext'
 
@@ -21,7 +21,7 @@ function statusClass(s: string) {
 }
 
 export function PlasmaStabilityV2Page() {
-  const { datasetId } = useDataset()
+  const { datasetId, products, thicknesses } = useDataset()
   const [range, setRange] = useState<(typeof RANGES)[number]>('24h')
   const [cathode, setCathode] = useState('all')
   const [data, setData] = useState<any>(null)
@@ -29,8 +29,38 @@ export function PlasmaStabilityV2Page() {
   const [loading, setLoading] = useState(false)
   const [toTs, setToTs] = useState<string | null>(null)
   const [fromTs, setFromTs] = useState<string | null>(null)
+  const [selectedProducts, setSelectedProducts] = useState<string[]>([])
+  const [selectedThicknesses, setSelectedThicknesses] = useState<number[]>([])
 
-  const load = async (cath = cathode, preset = range, anchorTo: string | null = toTs) => {
+  const toggleProduct = (val: string) => {
+    setSelectedProducts((prev) => prev.includes(val) ? prev.filter((x) => x !== val) : [...prev, val])
+  }
+
+  const toggleThickness = (val: string) => {
+    const num = Number(val)
+    if (!Number.isFinite(num)) return
+    setSelectedThicknesses((prev) => prev.includes(num) ? prev.filter((x) => x !== num) : [...prev, num])
+  }
+
+  const toLocalInputValue = (iso: string | null) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ''
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+  }
+
+  const fromInputToIso = (local: string) => {
+    const d = new Date(local)
+    if (Number.isNaN(d.getTime())) return null
+    return d.toISOString()
+  }
+
+  const load = async (
+    cath = cathode,
+    preset = range,
+    anchorTo: string | null = toTs,
+    explicitWindow?: { from: string; to: string },
+  ) => {
     if (!datasetId) return
     setLoading(true); setError('')
     try {
@@ -39,7 +69,7 @@ export function PlasmaStabilityV2Page() {
         const meta = await columns()
         effectiveTo = meta?.data?.defaults?.latest_ts || new Date().toISOString()
       }
-      const w = computeFromTo(String(effectiveTo), preset)
+      const w = explicitWindow || computeFromTo(String(effectiveTo), preset)
       setToTs(w.to); setFromTs(w.from)
       const payload: any = {
         dataset_id: datasetId,
@@ -48,7 +78,11 @@ export function PlasmaStabilityV2Page() {
         aggregation: 'mean',
         active_threshold: 0,
         cathode: cath,
-        window_preset: preset,
+        window_preset: explicitWindow ? undefined : preset,
+        filters: {
+          product: selectedProducts,
+          thickness_mm: selectedThicknesses,
+        },
       }
       const res = await stabilityV2(payload)
       setData(res.data)
@@ -71,6 +105,20 @@ export function PlasmaStabilityV2Page() {
       }
     })()
   }, [datasetId])
+
+  const applyCustomRange = async () => {
+    const fromIso = fromTs
+    const toIso = toTs
+    if (!fromIso || !toIso) {
+      setError('Please provide a valid From/To date-time range')
+      return
+    }
+    if (new Date(fromIso) >= new Date(toIso)) {
+      setError('From must be earlier than To')
+      return
+    }
+    await load(cathode, range, toIso, { from: fromIso, to: toIso })
+  }
 
   const cathodes = useMemo(() => ['all', ...Object.keys(data?.series_by_cathode || {})], [data])
 
@@ -106,6 +154,36 @@ export function PlasmaStabilityV2Page() {
             {cathodes.map((c) => <option key={c} value={c}>{c}</option>)}
           </Select>
         </div>
+        <div className='min-w-44'>
+          <label className='text-xs text-slate-600'>Product filter</label>
+          <Select value='' onChange={(e: any) => { if (e.target.value) toggleProduct(e.target.value) }}>
+            <option value=''>All products</option>
+            {products.map((p) => <option key={p} value={p}>{p}</option>)}
+          </Select>
+          {selectedProducts.length > 0 && <p className='text-[11px] text-blue-700 mt-1'>{selectedProducts.join(', ')}</p>}
+          <Button className='mt-1' variant='ghost' onClick={() => { setSelectedProducts([]); load(cathode, range, toTs) }}>Clear</Button>
+        </div>
+        <div className='min-w-44'>
+          <label className='text-xs text-slate-600'>Thickness filter</label>
+          <Select value='' onChange={(e: any) => { if (e.target.value) toggleThickness(e.target.value) }}>
+            <option value=''>All thicknesses</option>
+            {thicknesses.map((t) => <option key={String(t)} value={String(t)}>{String(t)}</option>)}
+          </Select>
+          {selectedThicknesses.length > 0 && <p className='text-[11px] text-blue-700 mt-1'>{selectedThicknesses.join(', ')}</p>}
+          <Button className='mt-1' variant='ghost' onClick={() => { setSelectedThicknesses([]); load(cathode, range, toTs) }}>Clear</Button>
+        </div>
+      </div>
+      <div className='flex flex-wrap gap-2 items-end'>
+        <div>
+          <label className='text-xs text-slate-600'>From</label>
+          <Input type='datetime-local' value={toLocalInputValue(fromTs)} onChange={(e: any) => setFromTs(fromInputToIso(e.target.value))} />
+        </div>
+        <div>
+          <label className='text-xs text-slate-600'>To</label>
+          <Input type='datetime-local' value={toLocalInputValue(toTs)} onChange={(e: any) => setToTs(fromInputToIso(e.target.value))} />
+        </div>
+        <Button variant='secondary' onClick={applyCustomRange}>Apply time range</Button>
+        <Button variant='secondary' onClick={() => load(cathode, range, toTs)}>Apply product/thickness</Button>
         {data?.thresholds && <div className='text-xs text-slate-600'>
           thresholds: Normal ≤ {data.thresholds.normal_max}, Medium ≤ {data.thresholds.medium_max}, Critical &gt; {data.thresholds.medium_max}
         </div>}
