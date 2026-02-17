@@ -63,6 +63,7 @@ class MergeConfig:
     use_cache_read: bool = True
     use_cache_write: bool = True
     cache_dir: Optional[Path] = None
+    ml_ready: bool = True
 
 
 CACHE_VERSION = "v1"
@@ -696,6 +697,31 @@ def load_process_dataset(files: List[Path], log, progress=None, progress_base: f
     return wide
 
 
+def _format_for_ml(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize merged dataset for ML-friendly training/serving use."""
+    out = df.copy()
+
+    if "day" in out.columns:
+        day_dt = pd.to_datetime(out["day"], errors="coerce")
+        out["day"] = day_dt.dt.date
+        out["dayOfWeek"] = day_dt.dt.dayofweek.astype("Int64")
+        out["month"] = day_dt.dt.month.astype("Int64")
+        out["weekOfYear"] = day_dt.dt.isocalendar().week.astype("Int64")
+
+    if "plate" in out.columns:
+        out["plate"] = pd.to_numeric(out["plate"], errors="coerce").astype("Int64")
+
+    categorical_cols = [c for c in out.columns if c in {"product"} or c.endswith("actTargetMaterial1") or c.endswith("actTargetMaterial2")]
+    for c in categorical_cols:
+        out[c] = out[c].astype("string")
+
+    # Keep a stable, deterministic column order for reproducible ML pipelines.
+    priority = [c for c in ["day", "plate", "file_ts", "product", "dayOfWeek", "month", "weekOfYear"] if c in out.columns]
+    rest = sorted([c for c in out.columns if c not in priority])
+    out = out[priority + rest]
+    return out
+
+
 def run_merge(cfg: MergeConfig, log, progress=None) -> Path:
     if progress:
         progress(0.01, "Scanning files")
@@ -735,6 +761,9 @@ def run_merge(cfg: MergeConfig, log, progress=None) -> Path:
 
     merged = color_df.merge(proc_df, on=["day", "plate"], how=cfg.merge_how, suffixes=("", "_process"))
     merged = merged.sort_values(["day", "plate"]).reset_index(drop=True)
+    if cfg.ml_ready:
+        merged = _format_for_ml(merged)
+        log("Applied ML-ready formatting (types + calendar features + stable column order).")
     log(f"Merged rows: {len(merged)}")
 
     out = cfg.output_path
@@ -775,6 +804,7 @@ class MergerApp:
         self.cache_read_var = IntVar(value=1)
         self.cache_write_var = IntVar(value=1)
         self.cache_dir_var = StringVar(value="")
+        self.ml_ready_var = IntVar(value=1)
         self.progress_var = DoubleVar(value=0.0)
         self.status_var = StringVar(value="Ready")
         self.run_btn: Optional[Button] = None
@@ -808,6 +838,7 @@ class MergerApp:
         Label(row_cache, text="Cache options", width=22, anchor=W).pack(side=LEFT)
         Checkbutton(row_cache, text="Use cache (read)", variable=self.cache_read_var).pack(side=LEFT, padx=6)
         Checkbutton(row_cache, text="Save cache (write)", variable=self.cache_write_var).pack(side=LEFT, padx=6)
+        Checkbutton(row_cache, text="ML-ready format", variable=self.ml_ready_var).pack(side=LEFT, padx=6)
 
         row2 = Frame(top)
         row2.pack(fill=BOTH, padx=8, pady=4)
@@ -888,6 +919,7 @@ class MergerApp:
             use_cache_read=bool(self.cache_read_var.get()),
             use_cache_write=bool(self.cache_write_var.get()),
             cache_dir=Path(cache_dir_raw) if cache_dir_raw else None,
+            ml_ready=bool(self.ml_ready_var.get()),
         )
 
         if not cfg.optoplex_dir.exists() or not cfg.process_dir.exists() or cfg.output_path.is_dir():
@@ -929,6 +961,7 @@ def main() -> None:
     ap.add_argument("--cache-dir", type=str, default="", help="Optional cache directory path")
     ap.add_argument("--no-cache-read", action="store_true", help="Disable reading from cache")
     ap.add_argument("--no-cache-write", action="store_true", help="Disable writing cache")
+    ap.add_argument("--no-ml-ready", action="store_true", help="Disable ML-ready formatting")
     ap.add_argument("--no-recursive", action="store_true", help="Disable recursive file scan")
     args = ap.parse_args()
 
@@ -950,6 +983,7 @@ def main() -> None:
         use_cache_read=not args.no_cache_read,
         use_cache_write=not args.no_cache_write,
         cache_dir=Path(args.cache_dir) if args.cache_dir else None,
+        ml_ready=not args.no_ml_ready,
     )
     run_merge(cfg, print)
 

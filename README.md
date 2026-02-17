@@ -31,7 +31,7 @@ python optoplex_process_merger_ui.py \
   --compression snappy \
   --merge-how inner \
   --year 2025
-  # opțional: --cache-dir /date/output/.merge_cache --no-cache-read --no-cache-write
+  # opțional: --cache-dir /date/output/.merge_cache --no-cache-read --no-cache-write --no-ml-ready
 ```
 
 ## Process pipeline (minimal, ML-ready)
@@ -54,6 +54,8 @@ Target-urile per compartiment sunt expuse explicit ca `cX.actTargetMaterial1` ș
 Debitele de material/main gas sunt disponibile per compartiment și ca `cX.mainGas1`, `cX.mainGas2`, `cX.mainGas3` (plus alias-urile legacy `cX.m1g`, `cX.m2g`, `cX.m3g`).
 
 Valorile numerice process sunt rotunjite la max. 2 zecimale, cu excepția `actVacuumPressure` (păstrată la precizie completă).
+
+Implicit, exportul final din merger aplică și un pas **ML-ready**: adaugă `dayOfWeek`, `month`, `weekOfYear`, normalizează tipurile cheie și ordonează stabil coloanele (poți dezactiva cu `--no-ml-ready` sau debifând checkbox-ul din UI).
 
 
 ## Cache pentru volume mari
