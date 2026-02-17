@@ -6,6 +6,7 @@ import { TrainPage } from './pages/TrainPage'
 import { PredictPage } from './pages/PredictPage'
 import { OptimizePage } from './pages/OptimizePage'
 import { PlasmaStabilityPage } from './pages/PlasmaStabilityPage'
+import { PlasmaStabilityV2Page } from './pages/PlasmaStabilityV2Page'
 import { DatasetProvider, useDataset } from './lib/datasetContext'
 import { Badge, Card, Tabs } from './components/ui'
 
@@ -28,13 +29,14 @@ function AppShell() {
         </Card>
       </header>
 
-      <Tabs tabs={['Data', 'Train', 'Predict', 'Optimize', 'Plasma Stability']} active={tab} setActive={setTab} />
+      <Tabs tabs={['Data', 'Train', 'Predict', 'Optimize', 'Plasma Stability', 'Plasma Stability v2']} active={tab} setActive={setTab} />
 
       {tab === 'Data' && <DataPage />}
       {tab === 'Train' && <TrainPage />}
       {tab === 'Predict' && <PredictPage />}
       {tab === 'Optimize' && <OptimizePage />}
       {tab === 'Plasma Stability' && <PlasmaStabilityPage />}
+      {tab === 'Plasma Stability v2' && <PlasmaStabilityV2Page />}
     </div>
   )
 }

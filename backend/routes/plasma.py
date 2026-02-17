@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response
 
 from core.errors import PlasmaApiError
-from schemas.plasma import PlasmaStabilityRequest
+from schemas.plasma import PlasmaStabilityRequest, PlasmaStabilityV2Request
 from services.plasma_service import PlasmaService
 
 router = APIRouter(prefix="/api", tags=["plasma"])
@@ -40,6 +40,20 @@ def plasma_stability_legacy(payload: PlasmaStabilityRequest):
 def plasma_stability(payload: PlasmaStabilityRequest):
     # UI-compatible endpoint forwarding to existing legacy handler behavior.
     return plasma_stability_legacy(payload)
+
+
+
+
+@router.post("/plasma/stability_v2", tags=["plasma"])
+def plasma_stability_v2(payload: PlasmaStabilityV2Request):
+    if payload.to_ts < payload.from_ts:
+        raise PlasmaApiError(
+            status_code=400,
+            code="PLASMA_INVALID_WINDOW",
+            message="Invalid time window",
+            details={"hint": "to_ts must be >= from_ts"},
+        )
+    return PlasmaService.stability_v2(payload).model_dump(mode="json")
 
 
 @router.get("/plasma_stability/export", include_in_schema=False)

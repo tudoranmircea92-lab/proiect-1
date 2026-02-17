@@ -51,3 +51,26 @@ class PlasmaStabilityResponse(BaseModel):
     series: list[PlasmaSeriesPoint]
     warnings: list[str]
     row_count: int
+
+
+class PlasmaStabilityV2Request(PlasmaStabilityRequest):
+    cathode: str = "all"
+    window_preset: Literal["1h", "6h", "24h", "7d"] | None = None
+
+
+class PlasmaScoreItem(BaseModel):
+    cathode: str
+    score: float | None
+    status: Literal["Normal", "Medium", "Critical", "OFF", "No data"]
+    score_details: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlasmaStabilityV2Response(BaseModel):
+    window: dict[str, Any]
+    params: dict[str, Any]
+    thresholds: dict[str, float]
+    status_mapping: dict[str, str]
+    scores: list[PlasmaScoreItem]
+    series_by_cathode: dict[str, list[PlasmaSeriesPoint]]
+    selected: dict[str, Any]
+    warnings: list[str]
