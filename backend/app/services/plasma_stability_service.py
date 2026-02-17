@@ -81,6 +81,48 @@ class PlasmaStabilityService:
             "count": len(detected),
         }
 
+
+    @staticmethod
+    def _pick_first_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+        for c in candidates:
+            if c in df.columns:
+                return c
+        return None
+
+    @staticmethod
+    def _to_float_set(values: list[str]) -> set[float]:
+        out: set[float] = set()
+        for v in values:
+            try:
+                out.add(float(v))
+            except Exception:
+                continue
+        return out
+
+    def _apply_data_filters(self, df: pd.DataFrame, req: PlasmaStabilityRequest) -> pd.DataFrame:
+        work = df
+        f = req.filter
+        if not f:
+            return work
+
+        if f.products:
+            prod_col = self._pick_first_column(work, ["product", "product_name", "Product"])
+            if prod_col:
+                wanted = {str(x).strip() for x in f.products if str(x).strip()}
+                if wanted:
+                    col = work[prod_col].astype(str).str.strip()
+                    work = work[col.isin(wanted)]
+
+        if f.thicknesses:
+            th_col = self._pick_first_column(work, ["thickness_mm", "glassThickness_mm", "nominalThickness_mm"])
+            if th_col:
+                wanted_t = self._to_float_set(f.thicknesses)
+                if wanted_t:
+                    th = pd.to_numeric(work[th_col], errors="coerce")
+                    work = work[th.isin(wanted_t)]
+
+        return work
+
     def _resolve_ts_col(self, df: pd.DataFrame, req: PlasmaStabilityRequest) -> str | None:
         if req.timestamp_col != "auto":
             return req.timestamp_col if req.timestamp_col in df.columns else None
@@ -88,6 +130,7 @@ class PlasmaStabilityService:
 
     def _filter_interval(self, df: pd.DataFrame, req: PlasmaStabilityRequest) -> tuple[pd.DataFrame, str | None]:
         work = df.copy()
+        work = self._apply_data_filters(work, req)
         ts_col = self._resolve_ts_col(work, req)
         if ts_col:
             work[ts_col] = pd.to_datetime(work[ts_col], errors="coerce")
