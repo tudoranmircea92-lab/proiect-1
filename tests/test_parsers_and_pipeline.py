@@ -119,3 +119,42 @@ def test_fresh_db_bootstrap_no_crash(tmp_path: Path):
     db = DuckStore(tmp_path / "fresh.duckdb")
     assert db.conn.execute("select count(*) from plate_core").fetchone()[0] == 0
     db.close()
+
+
+def test_run_once_extracts_real_rows(tmp_path: Path):
+    today = date.today()
+    proc_dir = tmp_path / "process" / f"{today.year:04d}" / f"{today.month:02d}" / f"{today.day:02d}"
+    opt_dir = tmp_path / "optoplex" / f"{today.year:04d}" / f"{today.month:02d}" / f"{today.day:02d}"
+    proc_dir.mkdir(parents=True)
+    opt_dir.mkdir(parents=True)
+
+    process_file = proc_dir / "20260224002703_8345_glassFile.csv"
+    process_file.write_text(
+        "glassId;Location;status;nomPower;actPower;nomCurrent;actCurrent;nomVoltage;actVoltage;actVacuumPressure;nomMainGas1;actMainGas1;nomMainGas2;actMainGas2;nomMainGas3;actMainGas3;nomRampGas1;actRampGas1;nomRampGas2;actRampGas2;nomRampGas3;actRampGas3;nomGasSegment;nomSegGasType;Seg1;Seg2;Seg3;Seg4;Seg5;product\n"
+        "8345;1;on;10;12;5;5.5;100;99;0.003;1;1.1;2;2.2;3;3.3;0.5;0.4;0.2;0.1;0.3;0.2;5;O2;1;2;3;4;5;P1\n",
+        encoding="utf-8",
+    )
+
+    opt_file = opt_dir / "2026-02-24-00-25-28_Plate-8345.csv"
+    opt_file.write_text(
+        "Transmission\n"
+        "1;0;20;1;2;3;0;0;0\n"
+        "2;0;21;1;2.5;3;0;0;0\n",
+        encoding="utf-8",
+    )
+
+    cfg = LiveDBConfig(
+        optoplex_dir=tmp_path / "optoplex",
+        process_dir=tmp_path / "process",
+        db_path=tmp_path / "live.duckdb",
+        one_shot=True,
+    )
+    run_once(cfg, today)
+
+    db = DuckStore(tmp_path / "live.duckdb")
+    assert db.conn.execute("select count(*) from raw_process_long").fetchone()[0] >= 1
+    assert db.conn.execute("select count(*) from raw_optoplex_long").fetchone()[0] >= 1
+    plate = db.conn.execute("select has_process, process_source_file from plate_core where plate='8345' limit 1").fetchone()
+    assert plate[0] is True
+    assert str(process_file) in plate[1]
+    db.close()

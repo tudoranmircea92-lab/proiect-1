@@ -101,6 +101,10 @@ class DuckStore:
                 pair_status VARCHAR,
                 color_missing_reason VARCHAR,
                 awaiting_color_until TIMESTAMP,
+                process_source_file VARCHAR,
+                color_source_file VARCHAR,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
                 PRIMARY KEY(plate, event_time)
             );
             CREATE TABLE IF NOT EXISTS raw_process_long (

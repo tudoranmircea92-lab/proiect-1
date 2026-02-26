@@ -123,3 +123,31 @@ Tabela nouă:
 ```bash
 pytest -q
 ```
+
+## 11) Validation checklist (SQL)
+
+După ce rulezi ingestul, verifică în DuckDB:
+
+```sql
+-- 1) Au fost extrase rânduri reale, nu doar fișiere
+SELECT count(*) AS process_rows FROM raw_process_long;
+SELECT count(*) AS optoplex_rows FROM raw_optoplex_long;
+
+-- 2) plate_core are stare operațională de pairing
+SELECT plate, event_time, has_process, has_color, pair_status, process_source_file, color_source_file
+FROM plate_core
+ORDER BY event_time DESC
+LIMIT 20;
+
+-- 3) tracking idempotent pe fișiere
+SELECT file_path, file_mtime, ingested_at
+FROM ingested_files
+ORDER BY ingested_at DESC
+LIMIT 20;
+
+-- 4) decizii de matching auditabile
+SELECT plate, event_time, optoplex_file_time, pair_status, note, updated_at
+FROM pairing_log
+ORDER BY updated_at DESC
+LIMIT 20;
+```

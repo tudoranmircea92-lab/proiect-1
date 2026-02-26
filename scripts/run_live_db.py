@@ -22,6 +22,7 @@ from live_db.watch import acquire_lock, is_file_complete, list_candidate_files, 
 UPSERT_KEYS = {
     "file_registry": ["full_path"],
     "ingested_files": ["file_path"],
+    "pairing_log": ["plate", "event_time", "optoplex_file_time", "pair_status"],
     "raw_process_long": ["plate", "event_time", "Location"],
     "raw_optoplex_long": ["plate", "stamp", "device_norm", "position"],
     "plate_core": ["plate", "event_time"],
@@ -115,6 +116,21 @@ def mark_ingested_file(store: DuckStore, path: Path):
     )
 
 
+def log_pairing(store: DuckStore, plate: str, event_time: datetime | None, optoplex_file_time: datetime | None, pair_status: str, note: str):
+    store.upsert_rows(
+        "pairing_log",
+        [{
+            "plate": plate,
+            "event_time": event_time,
+            "optoplex_file_time": optoplex_file_time,
+            "pair_status": pair_status,
+            "note": note,
+            "updated_at": datetime.utcnow(),
+        }],
+        UPSERT_KEYS["pairing_log"],
+    )
+
+
 def process_process_file(store: DuckStore, cfg: LiveDBConfig, path: Path, metrics: dict):
     rows, core = parse_process_file(path)
     vr = validate_process_rows(rows, cfg.required_columns)
@@ -126,11 +142,17 @@ def process_process_file(store: DuckStore, cfg: LiveDBConfig, path: Path, metric
     zone = build_zone_summary(comp)
     risk = build_risk_summary(comp, cfg.thresholds)
 
+    existing_core = store.conn.execute("SELECT has_color, pair_status, optoplex_file_time, color_source_file, created_at FROM plate_core WHERE plate=? AND event_time=?", [core["plate"], core["event_time"]]).fetchone()
+    already_has_color = bool(existing_core[0]) if existing_core else False
     core["has_process"] = True
-    core["has_color"] = False
+    core["has_color"] = already_has_color
     core["awaiting_color_until"] = compute_awaiting_color_until(core["event_time"], cfg.match_window)
-    core["pair_status"] = resolve_pair_status(True, False, core["awaiting_color_until"], datetime.utcnow())
-    core["color_missing_reason"] = "pending_color"
+    core["pair_status"] = "paired" if already_has_color else resolve_pair_status(True, False, core["awaiting_color_until"], datetime.utcnow())
+    core["color_missing_reason"] = None if already_has_color else "pending_color"
+    core["process_source_file"] = str(path)
+    core["color_source_file"] = existing_core[3] if existing_core else None
+    core["created_at"] = existing_core[4] if existing_core else datetime.utcnow()
+    core["updated_at"] = datetime.utcnow()
 
     feats = build_model_features(core, zone, risk, comp)
 
@@ -141,6 +163,9 @@ def process_process_file(store: DuckStore, cfg: LiveDBConfig, path: Path, metric
     store.upsert_rows("risk_summary", risk, UPSERT_KEYS["risk_summary"])
     store.upsert_rows("model_features_plate", feats, UPSERT_KEYS["model_features_plate"])
 
+    if core["pair_status"] == "process_only":
+        log_pairing(store, core["plate"], core["event_time"], None, "process_only", "process arrived; awaiting color")
+
     orphans = store.conn.execute("SELECT plate, optoplex_file_time FROM orphan_optoplex WHERE status='pending' AND plate=?", [core["plate"]]).fetchall()
     if orphans:
         color_candidates = [{"event_time": core["event_time"], "plate": core["plate"]}]
@@ -148,9 +173,10 @@ def process_process_file(store: DuckStore, cfg: LiveDBConfig, path: Path, metric
         if best and abs((best["event_time"] - orphans[0][1]).total_seconds()) <= cfg.match_window.total_seconds():
             store.conn.execute("UPDATE orphan_optoplex SET status='matched', matched_event_time=? WHERE plate=? AND status='pending'", [core["event_time"], core["plate"]])
             store.conn.execute(
-                "UPDATE plate_core SET has_color=true, pair_status='late_color_matched', color_missing_reason=NULL WHERE plate=? AND event_time=?",
-                [core["plate"], core["event_time"]],
+                "UPDATE plate_core SET has_color=true, pair_status='late_color_matched', color_missing_reason=NULL, updated_at=?, optoplex_file_time=?, color_source_file=coalesce(color_source_file, (SELECT full_path FROM orphan_optoplex WHERE plate=? AND status='matched' LIMIT 1)) WHERE plate=? AND event_time=?",
+                [datetime.utcnow(), orphans[0][1], core["plate"], core["plate"], core["event_time"]],
             )
+            log_pairing(store, core["plate"], core["event_time"], orphans[0][1], "late_color_matched", "matched pending orphan after process ingest")
 
     metrics["rows_written"] += len(rows) + len(comp) + len(zone) + len(risk) + len(feats) + 1
 
@@ -170,21 +196,24 @@ def process_optoplex_file(store: DuckStore, cfg: LiveDBConfig, path: Path, metri
         if best and abs((best["event_time"] - meta["event_time"]).total_seconds()) <= cfg.match_window.total_seconds():
             event_time = best["event_time"]
             store.conn.execute(
-                "UPDATE plate_core SET has_color=true, optoplex_file_time=?, pair_status='paired', color_missing_reason=NULL WHERE plate=? AND event_time=?",
-                [meta["optoplex_file_time"], meta["plate"], event_time],
+                "UPDATE plate_core SET has_color=true, optoplex_file_time=?, pair_status='paired', color_missing_reason=NULL, color_source_file=?, updated_at=? WHERE plate=? AND event_time=?",
+                [meta["optoplex_file_time"], str(path), datetime.utcnow(), meta["plate"], event_time],
             )
+            log_pairing(store, meta["plate"], event_time, meta["optoplex_file_time"], "paired", "color matched to nearest process event")
         else:
             store.upsert_rows(
                 "orphan_optoplex",
                 [{"plate": meta["plate"], "optoplex_file_time": meta["optoplex_file_time"], "full_path": str(path), "status": "pending", "created_at": datetime.utcnow(), "matched_event_time": None}],
                 ["plate", "optoplex_file_time"],
             )
+            log_pairing(store, meta["plate"], None, meta["optoplex_file_time"], "color_only", "color file pending process match")
     else:
         store.upsert_rows(
             "orphan_optoplex",
             [{"plate": meta["plate"], "optoplex_file_time": meta["optoplex_file_time"], "full_path": str(path), "status": "pending", "created_at": datetime.utcnow(), "matched_event_time": None}],
             ["plate", "optoplex_file_time"],
         )
+        log_pairing(store, meta["plate"], None, meta["optoplex_file_time"], "color_only", "color file pending process match")
 
     summary = build_optics_summary(rows, event_time)
     targets = build_model_targets(summary)
@@ -194,12 +223,20 @@ def process_optoplex_file(store: DuckStore, cfg: LiveDBConfig, path: Path, metri
 
 
 def expire_unmatched(store: DuckStore):
+    expired_rows = store.conn.execute(
+        """
+        SELECT plate, event_time FROM plate_core
+        WHERE has_process=true AND has_color=false AND awaiting_color_until < now() AND pair_status <> 'expired_unmatched'
+        """
+    ).fetchall()
     store.conn.execute(
         """
-        UPDATE plate_core SET pair_status='expired_unmatched', color_missing_reason='window_expired'
+        UPDATE plate_core SET pair_status='expired_unmatched', color_missing_reason='window_expired', updated_at=now()
         WHERE has_process=true AND has_color=false AND awaiting_color_until < now()
         """
     )
+    for plate, event_time in expired_rows:
+        log_pairing(store, plate, event_time, None, "expired_unmatched", "matching window expired")
 
 
 def run_once(cfg: LiveDBConfig, current_date: date):
