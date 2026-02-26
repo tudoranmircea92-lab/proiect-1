@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import csv
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
 
 from .validators import parse_float
+
+
+logger = logging.getLogger(__name__)
 
 
 def _read_with_fallback(path: Path) -> str:
@@ -46,12 +50,21 @@ def parse_optoplex_file(path: Path, device_map: dict[str, str]) -> tuple[list[di
 
     marker_idx = next((i for i, ln in enumerate(lines) if ln.strip().lower() == "measurement values"), None)
     if marker_idx is None or marker_idx + 1 >= len(lines):
+        logger.warning(
+            "Optoplex parse produced 0 rows: measurement_values_found=%s spectrum_start=%s parsed_rows=0 mapped_cols={} file=%s",
+            marker_idx is not None,
+            None,
+            path,
+        )
         return [], {"plate": plate_from_name, "optoplex_file_time": file_time, "event_time": file_time}
 
     header = next(csv.reader([lines[marker_idx + 1]], delimiter=";"))
+    spectrum_idx: int | None = None
     data_lines: list[str] = []
-    for ln in lines[marker_idx + 2 :]:
-        if ln.strip().lower().startswith("spectrum"):
+    for i, ln in enumerate(lines[marker_idx + 2 :], start=marker_idx + 2):
+        first = next(csv.reader([ln], delimiter=";"))[0].strip().lower()
+        if first == "spectrum" or first.startswith("spectrum"):
+            spectrum_idx = i
             break
         data_lines.append(ln)
 
@@ -66,6 +79,20 @@ def parse_optoplex_file(path: Path, device_map: dict[str, str]) -> tuple[list[di
     idx_rt = _find_col(header, "rtglass", "rt", "rt glass")
     idx_res = _find_col(header, "resistance")
     idx_dist = _find_col(header, "distance")
+
+    mapped_cols = {
+        "stamp": idx_stamp,
+        "plate": idx_plate,
+        "device": idx_device,
+        "position": idx_pos,
+        "Y": idx_y,
+        "L": idx_l,
+        "a": idx_a,
+        "b": idx_b,
+        "RT": idx_rt,
+        "Resistance": idx_res,
+        "Distance": idx_dist,
+    }
 
     rows: list[dict] = []
     plate_detected = plate_from_name
@@ -111,6 +138,25 @@ def parse_optoplex_file(path: Path, device_map: dict[str, str]) -> tuple[list[di
                 "Resistance": parse_float(parts[idx_res]) if idx_res is not None and idx_res < len(parts) else None,
                 "Distance": parse_float(parts[idx_dist]) if idx_dist is not None and idx_dist < len(parts) else None,
             }
+        )
+
+    if not rows:
+        logger.warning(
+            "Optoplex parse produced 0 rows: measurement_values_found=%s spectrum_start=%s parsed_rows=%s mapped_cols=%s file=%s",
+            True,
+            spectrum_idx,
+            len(rows),
+            mapped_cols,
+            path,
+        )
+    else:
+        logger.debug(
+            "Optoplex parse success: measurement_values_found=%s spectrum_start=%s parsed_rows=%s mapped_cols=%s file=%s",
+            True,
+            spectrum_idx,
+            len(rows),
+            mapped_cols,
+            path,
         )
 
     return rows, {"plate": plate_detected, "optoplex_file_time": file_time, "event_time": file_time}
