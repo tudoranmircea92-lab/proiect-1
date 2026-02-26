@@ -111,7 +111,8 @@ class DuckStore:
                 plate VARCHAR,
                 event_time TIMESTAMP,
                 Location BIGINT,
-                PRIMARY KEY(plate, event_time, Location)
+                row_idx BIGINT,
+                PRIMARY KEY(plate, event_time, Location, row_idx)
             );
             CREATE TABLE IF NOT EXISTS raw_optoplex_long (
                 plate VARCHAR,
@@ -153,6 +154,33 @@ class DuckStore:
             );
             """
         )
+        self._migrate_raw_process_long_schema()
+
+    def _migrate_raw_process_long_schema(self):
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info('raw_process_long')").fetchall()}
+        if "row_idx" in cols:
+            return
+        self.conn.execute("ALTER TABLE raw_process_long RENAME TO raw_process_long_legacy")
+        self.conn.execute(
+            """
+            CREATE TABLE raw_process_long (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                Location BIGINT,
+                row_idx BIGINT,
+                PRIMARY KEY(plate, event_time, Location, row_idx)
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            INSERT INTO raw_process_long(plate, event_time, Location, row_idx)
+            SELECT plate, event_time, Location,
+                   row_number() OVER (PARTITION BY plate, event_time, Location ORDER BY rowid)
+            FROM raw_process_long_legacy
+            """
+        )
+        self.conn.execute("DROP TABLE raw_process_long_legacy")
 
     def ensure_table_for_rows(self, table: str, rows: list[dict]):
         if not rows:
@@ -173,7 +201,7 @@ class DuckStore:
         cols = list(rows[0].keys())
         self.conn.execute(f'CREATE TEMP TABLE {temp} AS SELECT * FROM {table} WHERE 1=0')
         placeholders = ",".join(["?"] * len(cols))
-        col_list = ', '.join([f'"{c}"' for c in cols])
+        col_list = ", ".join([f'"{c}"' for c in cols])
         self.conn.executemany(
             f'INSERT INTO {temp} ({col_list}) VALUES ({placeholders})',
             [[r.get(c) for c in cols] for r in rows],
