@@ -78,6 +78,7 @@ def test_compartment_aggregation():
              "nomRampGas1":1,"actRampGas1":1,"deltaRampGas1":0,"nomRampGas2":1,"actRampGas2":1,"deltaRampGas2":0,"nomRampGas3":1,"actRampGas3":1,"deltaRampGas3":0}]
     comp = build_compartment_state(rows, DEFAULT_ZONE_MAP["default"], DEFAULT_MATERIAL_MAP, DEFAULT_GAS_MAP)
     assert comp[0]["seg_gas_family"] == "reactive_oxidation"
+    assert "row_idx" in comp[0]
 
 
 def test_training_view_no_crash_on_empty_db(tmp_path: Path):
@@ -199,3 +200,13 @@ def test_failed_file_not_marked_ingested_and_next_file_continues(tmp_path: Path)
     good_mark = db.conn.execute("select count(*) from ingested_files where file_path=?", [str(good)]).fetchone()[0]
     assert good_mark == 1
     db.close()
+
+
+def test_compartment_state_dedupe_key_includes_row_idx():
+    rows = [
+        {"plate": "1", "event_time": datetime(2026, 1, 1), "Location": 0, "row_idx": 1},
+        {"plate": "1", "event_time": datetime(2026, 1, 1), "Location": 0, "row_idx": 1},
+        {"plate": "1", "event_time": datetime(2026, 1, 1), "Location": 0, "row_idx": 2},
+    ]
+    out = dedupe_rows(rows, ["plate", "event_time", "Location", "row_idx"])
+    assert len(out) == 2

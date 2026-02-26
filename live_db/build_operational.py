@@ -29,6 +29,7 @@ def build_compartment_state(rows: list[dict], zone_map: dict[str, list[int]], ma
             "plate": r["plate"],
             "event_time": r["event_time"],
             "Location": r["Location"],
+            "row_idx": r.get("row_idx"),
             "zone_id": f"z{list(zone_map.keys()).index(zone_by_loc.get(r['Location'], list(zone_map.keys())[-1])) + 1}" if zone_map else "z?",
             "zone_name": zone_by_loc.get(r["Location"], "unmapped"),
             "material_raw": r.get("material_raw"),

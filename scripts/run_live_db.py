@@ -27,7 +27,7 @@ UPSERT_KEYS = {
     "raw_optoplex_long": ["plate", "stamp", "device_norm", "position"],
     "plate_core": ["plate", "event_time"],
     "optics_summary": ["plate", "event_time"],
-    "compartment_state_long": ["plate", "event_time", "Location"],
+    "compartment_state_long": ["plate", "event_time", "Location", "row_idx"],
     "zone_summary": ["plate", "event_time"],
     "risk_summary": ["plate", "event_time"],
     "model_features_plate": ["plate", "event_time"],
@@ -154,8 +154,11 @@ def process_process_file(store: DuckStore, cfg: LiveDBConfig, path: Path, metric
 
     zone_map = cfg.get_zone_mapping(core.get("product"))
     comp = build_compartment_state(rows, zone_map, cfg.material_map, cfg.gas_map)
+    comp = dedupe_rows(comp, UPSERT_KEYS["compartment_state_long"])
     zone = build_zone_summary(comp)
+    zone = dedupe_rows(zone, UPSERT_KEYS["zone_summary"])
     risk = build_risk_summary(comp, cfg.thresholds)
+    risk = dedupe_rows(risk, UPSERT_KEYS["risk_summary"])
 
     existing_core = store.conn.execute("SELECT has_color, pair_status, optoplex_file_time, color_source_file, created_at FROM plate_core WHERE plate=? AND event_time=?", [core["plate"], core["event_time"]]).fetchone()
     already_has_color = bool(existing_core[0]) if existing_core else False

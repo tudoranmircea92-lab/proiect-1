@@ -125,7 +125,8 @@ class DuckStore:
                 plate VARCHAR,
                 event_time TIMESTAMP,
                 Location BIGINT,
-                PRIMARY KEY(plate, event_time, Location)
+                row_idx BIGINT,
+                PRIMARY KEY(plate, event_time, Location, row_idx)
             );
             CREATE TABLE IF NOT EXISTS zone_summary (
                 plate VARCHAR,
@@ -155,6 +156,7 @@ class DuckStore:
             """
         )
         self._migrate_raw_process_long_schema()
+        self._migrate_compartment_state_long_schema()
 
     def _migrate_raw_process_long_schema(self):
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info('raw_process_long')").fetchall()}
@@ -181,6 +183,32 @@ class DuckStore:
             """
         )
         self.conn.execute("DROP TABLE raw_process_long_legacy")
+
+    def _migrate_compartment_state_long_schema(self):
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info('compartment_state_long')").fetchall()}
+        if "row_idx" in cols:
+            return
+        self.conn.execute("ALTER TABLE compartment_state_long RENAME TO compartment_state_long_legacy")
+        self.conn.execute(
+            """
+            CREATE TABLE compartment_state_long (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                Location BIGINT,
+                row_idx BIGINT,
+                PRIMARY KEY(plate, event_time, Location, row_idx)
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            INSERT INTO compartment_state_long(plate, event_time, Location, row_idx)
+            SELECT plate, event_time, Location,
+                   row_number() OVER (PARTITION BY plate, event_time, Location ORDER BY rowid)
+            FROM compartment_state_long_legacy
+            """
+        )
+        self.conn.execute("DROP TABLE compartment_state_long_legacy")
 
     def ensure_table_for_rows(self, table: str, rows: list[dict]):
         if not rows:
