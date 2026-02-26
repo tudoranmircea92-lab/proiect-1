@@ -1,13 +1,78 @@
-# Live DuckDB ingest (v1)
+# Live DuckDB ingest (v1) + Node.js UI
 
-Sistem Python pentru extracție live din fișiere process + Optoplex, cu upsert idempotent în DuckDB și matching întârziat (process-first).
+Sistem Python pentru extracție live din fișiere process + Optoplex, cu upsert idempotent în DuckDB și matching întârziat (process-first), plus interfață Node.js (tab: **Create DB Live**).
 
-## Rulare (Windows)
+## 1) Cerințe
+
+- Python 3.10+
+- Node.js 18+
+- npm
+
+---
+
+## 2) Setup Python
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
 pip install duckdb pytest
+```
+
+---
+
+## 3) Setup UI Node.js
+
+```powershell
+cd web
+npm install
+cd ..
+```
+
+---
+
+## 4) Pornire interfață
+
+```powershell
+cd web
+npm start
+```
+
+Deschide în browser:
+
+- `http://localhost:3000`
+
+Interfața are acum un singur tab activ:
+
+- **Create DB Live**
+
+Acest tab pornește/oprește pipeline-ul Python `scripts/run_live_db.py` cu parametrii introduși în formular.
+
+---
+
+## 5) Ce completezi în tab-ul “Create DB Live”
+
+- `Python executable` (ex: `python` sau path complet la `.venv\Scripts\python.exe`)
+- `Optoplex directory` (ex: `D:\optoplex`)
+- `Process directory` (ex: `D:\process`)
+- `DuckDB path` (ex: `D:\data\coater.duckdb`)
+- `Poll seconds` (default `10`)
+- `Match window minutes` (default `10`)
+- `Archive directory` (opțional)
+- `Log file` (opțional)
+- `One shot` (`true` / `false`)
+
+Apoi:
+
+- **Start** pentru pornire
+- **Stop** pentru oprire
+
+Status + ultimele loguri apar în UI.
+
+---
+
+## 6) Rulare directă (fără UI)
+
+```powershell
 python scripts/run_live_db.py --optoplex-dir D:\optoplex --process-dir D:\process --db-path D:\data\coater.duckdb
 ```
 
@@ -23,7 +88,9 @@ Cu arhivare + log:
 python scripts/run_live_db.py --optoplex-dir D:\optoplex --process-dir D:\process --db-path D:\data\coater.duckdb --archive-dir D:\archive --log-file D:\logs\live_db.log
 ```
 
-## Comportament live
+---
+
+## 7) Comportament live
 
 - Polling loop (`--poll-seconds`, default 10).
 - Fișier complet: există și are dimensiune stabilă la 2 verificări consecutive.
@@ -31,7 +98,9 @@ python scripts/run_live_db.py --optoplex-dir D:\optoplex --process-dir D:\proces
 - Single-instance lock: `<db>.lock`.
 - Procesare tranzacțională per run; rollback la eroare.
 
-## Structură module
+---
+
+## 8) Structură module
 
 - `live_db/watch.py` – polling + file completion + lock.
 - `live_db/parse_process.py` – parser process CSV.
@@ -41,8 +110,11 @@ python scripts/run_live_db.py --optoplex-dir D:\optoplex --process-dir D:\proces
 - `live_db/build_model.py` – feature/target tables (fără ML activ).
 - `live_db/store.py` – schema + `MERGE` idempotent.
 - `scripts/run_live_db.py` – orchestrare end-to-end.
+- `web/src/server.js` + `web/public/index.html` – UI Node.js.
 
-## Tabele DuckDB
+---
+
+## 9) Tabele DuckDB
 
 ### L0_INGEST
 - `file_registry`
@@ -66,7 +138,9 @@ python scripts/run_live_db.py --optoplex-dir D:\optoplex --process-dir D:\proces
 - `model_targets_plate` (key: `plate,event_time`)
 - `model_training_color` (view)
 
-## Edge cases tratate
+---
+
+## 10) Edge cases tratate
 
 - `process_only`, `color_only`, `paired`, `late_color_matched`, `expired_unmatched`.
 - Orfani Optoplex păstrați în `orphan_optoplex` și rematch la apariția process.
@@ -75,7 +149,9 @@ python scripts/run_live_db.py --optoplex-dir D:\optoplex --process-dir D:\proces
 - Main gases parser 1..5, operational folosește 1..3.
 - Ramp gases 1..3 incluse explicit.
 
-## Teste
+---
+
+## 11) Teste
 
 ```bash
 pytest -q

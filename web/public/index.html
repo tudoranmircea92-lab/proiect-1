@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coater Live DB UI</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background:#0f172a; color:#e2e8f0; }
+    header { padding: 16px 20px; border-bottom: 1px solid #1e293b; }
+    .tabs { display:flex; gap:8px; padding: 12px 20px; border-bottom:1px solid #1e293b; }
+    .tab { padding:10px 14px; border:1px solid #334155; border-radius:8px; background:#111827; color:#93c5fd; cursor:pointer; }
+    .tab.active { background:#1d4ed8; color:white; }
+    .container { padding:20px; max-width:980px; }
+    .panel { background:#111827; border:1px solid #334155; border-radius:10px; padding:16px; }
+    label { display:block; margin:10px 0 4px; }
+    input { width:100%; padding:8px; border-radius:6px; border:1px solid #475569; background:#0b1220; color:#e2e8f0; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    button { margin-top:14px; margin-right:8px; padding:10px 14px; border:0; border-radius:8px; cursor:pointer; }
+    .start { background:#22c55e; color:#04110a; }
+    .stop { background:#ef4444; color:white; }
+    pre { background:#020617; border:1px solid #334155; border-radius:8px; padding:10px; max-height:300px; overflow:auto; }
+    .muted { color:#94a3b8; }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Coater Platform UI</h2>
+    <div class="muted">Interfață Node.js (extensibilă) – v1 cu tab activ: Create DB Live</div>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active">Create DB Live</div>
+  </div>
+
+  <div class="container">
+    <div class="panel">
+      <h3>Create DB Live</h3>
+      <p class="muted">Pornește/oprește pipeline-ul Python de ingest live în DuckDB.</p>
+
+      <label>Python executable</label>
+      <input id="pythonExe" value="python" />
+
+      <label>Optoplex directory</label>
+      <input id="optoplexDir" placeholder="D:\\optoplex" />
+
+      <label>Process directory</label>
+      <input id="processDir" placeholder="D:\\process" />
+
+      <label>DuckDB path</label>
+      <input id="dbPath" placeholder="D:\\data\\coater.duckdb" />
+
+      <div class="row">
+        <div>
+          <label>Poll seconds</label>
+          <input id="pollSeconds" value="10" />
+        </div>
+        <div>
+          <label>Match window minutes</label>
+          <input id="matchWindowMinutes" value="10" />
+        </div>
+      </div>
+
+      <label>Archive directory (optional)</label>
+      <input id="archiveDir" placeholder="D:\\archive" />
+
+      <label>Log file (optional)</label>
+      <input id="logFile" placeholder="D:\\logs\\live_db.log" />
+
+      <label>One shot (true/false)</label>
+      <input id="oneShot" value="false" />
+
+      <div>
+        <button class="start" onclick="startRun()">Start</button>
+        <button class="stop" onclick="stopRun()">Stop</button>
+      </div>
+
+      <p id="status" class="muted">Status: checking...</p>
+      <pre id="logs"></pre>
+    </div>
+  </div>
+
+  <script>
+    async function refresh() {
+      const r = await fetch('/api/status');
+      const s = await r.json();
+      document.getElementById('status').innerText = `Status: ${s.running ? 'RUNNING' : 'STOPPED'} ${s.pid ? `(pid=${s.pid})` : ''}`;
+      document.getElementById('logs').textContent = (s.logs || []).join('\n');
+    }
+
+    async function startRun() {
+      const payload = {
+        pythonExe: document.getElementById('pythonExe').value,
+        optoplexDir: document.getElementById('optoplexDir').value,
+        processDir: document.getElementById('processDir').value,
+        dbPath: document.getElementById('dbPath').value,
+        pollSeconds: Number(document.getElementById('pollSeconds').value || 10),
+        matchWindowMinutes: Number(document.getElementById('matchWindowMinutes').value || 10),
+        archiveDir: document.getElementById('archiveDir').value || undefined,
+        logFile: document.getElementById('logFile').value || undefined,
+        oneShot: (document.getElementById('oneShot').value || 'false').toLowerCase() === 'true'
+      };
+      const r = await fetch('/api/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json();
+      if (!r.ok) alert(data.error || 'Start failed');
+      refresh();
+    }
+
+    async function stopRun() {
+      const r = await fetch('/api/stop', { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) alert(data.error || 'Stop failed');
+      refresh();
+    }
+
+    setInterval(refresh, 2000);
+    refresh();
+  </script>
+</body>
+</html>
