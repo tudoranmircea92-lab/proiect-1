@@ -11,7 +11,8 @@ from live_db.pairing import choose_best_process_candidate
 from live_db.parse_optoplex import parse_optoplex_file
 from live_db.parse_process import parse_process_file
 from live_db.store import DuckStore
-from scripts.run_live_db import create_or_replace_training_view, should_process_file, today_folder, validate_db_path
+from live_db.config import LiveDBConfig
+from scripts.run_live_db import create_or_replace_training_view, run_once, should_process_file, today_folder, validate_db_path
 
 
 def test_parse_process_and_segments(tmp_path: Path):
@@ -104,4 +105,17 @@ def test_today_folder_and_ingested_files(tmp_path: Path):
     assert should_process_file(db, f) is False
     f.write_text("b", encoding="utf-8")
     assert should_process_file(db, f) is True
+    db.close()
+
+
+def test_fresh_db_bootstrap_no_crash(tmp_path: Path):
+    cfg = LiveDBConfig(
+        optoplex_dir=tmp_path / "optoplex",
+        process_dir=tmp_path / "process",
+        db_path=tmp_path / "fresh.duckdb",
+        one_shot=True,
+    )
+    run_once(cfg, date.today())
+    db = DuckStore(tmp_path / "fresh.duckdb")
+    assert db.conn.execute("select count(*) from plate_core").fetchone()[0] == 0
     db.close()

@@ -54,6 +54,27 @@ def create_or_replace_training_view(store: DuckStore):
     has_targets = store.conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='model_targets_plate'").fetchone()[0] > 0
     if not (has_features and has_targets):
         return
+    required_target_cols = {
+        "plate",
+        "event_time",
+        "target_T_L_mean",
+        "target_T_a_mean",
+        "target_T_b_mean",
+        "target_T_RT_mean",
+        "target_T_b_std",
+        "target_T_b_edge_center_delta",
+        "target_T_b_left_right_delta",
+        "target_T_uniformity_score",
+        "target_NAGY_resistance_mean",
+    }
+    target_cols = {
+        row[0]
+        for row in store.conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='model_targets_plate'"
+        ).fetchall()
+    }
+    if not required_target_cols.issubset(target_cols):
+        return
     store.conn.execute(
         """
         CREATE OR REPLACE VIEW model_training_color AS

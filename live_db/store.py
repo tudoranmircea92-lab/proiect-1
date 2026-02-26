@@ -83,6 +83,70 @@ class DuckStore:
                 file_mtime TIMESTAMP,
                 ingested_at TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS plate_core (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                product VARCHAR,
+                glassWidth DOUBLE,
+                glassLength DOUBLE,
+                glassThickness DOUBLE,
+                glassState VARCHAR,
+                nomProcessSpeed_mm DOUBLE,
+                actProcessSpeed_mm DOUBLE,
+                deltaProcessSpeed_mm DOUBLE,
+                optoplex_file_time TIMESTAMP,
+                process_file_time TIMESTAMP,
+                has_process BOOLEAN,
+                has_color BOOLEAN,
+                pair_status VARCHAR,
+                color_missing_reason VARCHAR,
+                awaiting_color_until TIMESTAMP,
+                PRIMARY KEY(plate, event_time)
+            );
+            CREATE TABLE IF NOT EXISTS raw_process_long (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                Location BIGINT,
+                PRIMARY KEY(plate, event_time, Location)
+            );
+            CREATE TABLE IF NOT EXISTS raw_optoplex_long (
+                plate VARCHAR,
+                stamp TIMESTAMP,
+                device_norm VARCHAR,
+                position BIGINT,
+                PRIMARY KEY(plate, stamp, device_norm, position)
+            );
+            CREATE TABLE IF NOT EXISTS compartment_state_long (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                Location BIGINT,
+                PRIMARY KEY(plate, event_time, Location)
+            );
+            CREATE TABLE IF NOT EXISTS zone_summary (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                PRIMARY KEY(plate, event_time)
+            );
+            CREATE TABLE IF NOT EXISTS risk_summary (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                PRIMARY KEY(plate, event_time)
+            );
+            CREATE TABLE IF NOT EXISTS optics_summary (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                PRIMARY KEY(plate, event_time)
+            );
+            CREATE TABLE IF NOT EXISTS model_features_plate (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                PRIMARY KEY(plate, event_time)
+            );
+            CREATE TABLE IF NOT EXISTS model_targets_plate (
+                plate VARCHAR,
+                event_time TIMESTAMP,
+                PRIMARY KEY(plate, event_time)
+            );
             """
         )
 
