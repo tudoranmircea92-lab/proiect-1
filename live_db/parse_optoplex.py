@@ -48,7 +48,7 @@ def parse_optoplex_file(path: Path, device_map: dict[str, str]) -> tuple[list[di
     file_time = infer_optoplex_file_time(path)
     plate_from_name = path.stem.split("Plate-")[-1]
 
-    marker_idx = next((i for i, ln in enumerate(lines) if ln.strip().lower() == "measurement values"), None)
+    marker_idx = next((i for i, ln in enumerate(lines) if (next(csv.reader([ln], delimiter=";"))[0].strip().lower() if ln.strip() else "") == "measurement values"), None)
     if marker_idx is None or marker_idx + 1 >= len(lines):
         logger.warning(
             "Optoplex parse produced 0 rows: measurement_values_found=%s spectrum_start=%s parsed_rows=0 mapped_cols={} file=%s",

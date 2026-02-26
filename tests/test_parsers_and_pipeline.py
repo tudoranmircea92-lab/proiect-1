@@ -33,7 +33,7 @@ def test_parse_optoplex_and_summary_dynamic_positions(tmp_path: Path):
     p = tmp_path / "2026-02-24-00-25-28_Plate-8345.csv"
     p.write_text(
         "Meta;X\n"
-        "Measurement Values\n"
+        "Measurement Values;;;;;;;;;;;;;;;;;;;;;;\n"
         "stamp;plate;device;position;Y;;L*;;a*;;b*;;RT Glass;Resistance;Distance\n"
         "2026-02-24 00:25:28;8345;Transmission;1;0;;20;;1;;2;;3;100;0\n"
         "2026-02-24 00:25:29;8345;Transmission;2;0;;21;;1;;2.5;;3;110;0\n"
@@ -134,7 +134,7 @@ def test_run_once_extracts_real_rows(tmp_path: Path):
 
     opt_file = opt_dir / "2026-02-24-00-25-28_Plate-8345.csv"
     opt_file.write_text(
-        "Measurement Values\n"
+        "Measurement Values;;;;;;;;;;;;;;;;;;;;;;\n"
         "stamp;plate;device;position;Y;;L*;;a*;;b*;;RT Glass;Resistance;Distance\n"
         "2026-02-24 00:25:28;8345;Transmission;1;0;;20;;1;;2;;3;100;0\n"
         "2026-02-24 00:25:29;8345;Transmission;2;0;;21;;1;;2.5;;3;110;0\n"
