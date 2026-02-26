@@ -19,38 +19,34 @@ def test_parse_process_and_segments(tmp_path: Path):
     p = tmp_path / "20260224002703_8345_glassFile.csv"
     p.write_text(
         "glassId;Location;status;nomPower;actPower;nomCurrent;actCurrent;nomVoltage;actVoltage;actVacuumPressure;nomMainGas1;actMainGas1;nomMainGas2;actMainGas2;nomMainGas3;actMainGas3;nomRampGas1;actRampGas1;nomRampGas2;actRampGas2;nomRampGas3;actRampGas3;nomGasSegment;nomSegGasType;Seg1;Seg2;Seg3;Seg4;Seg5;product\n"
-        "8345;1;on;10;12;5;5.5;100;99;0.003;1;1.1;2;2.2;3;3.3;0.5;0.4;0.2;0.1;0.3;0.2;5;O2;1;2;3;4;5;P1\n",
+        "8345;Compartment-1;on;10;12;5;5.5;100;99;0.003;1;1.1;2;2.2;3;3.3;0.5;0.4;0.2;0.1;0.3;0.2;5;O2;1;2;3;4;5;P1\n",
         encoding="utf-8",
     )
     rows, core = parse_process_file(p)
     assert rows[0]["seg_sum"] == 15
     assert rows[0]["seg_active_count"] == 5
     assert core["plate"] == "8345"
+    assert rows[0]["Location"] == 1
 
 
 def test_parse_optoplex_and_summary_dynamic_positions(tmp_path: Path):
     p = tmp_path / "2026-02-24-00-25-28_Plate-8345.csv"
     p.write_text(
-        "Reflection Glass\n"
-        "1;0;10;1;2;3;0;0;0\n"
-        "2;0;11;1;2;3;0;0;0\n"
-        "Transmission\n"
-        "1;0;20;1;2;3;0;0;0\n"
-        "2;0;21;1;2.5;3;0;0;0\n"
-        "3;0;22;1;3;3;0;0;0\n"
-        "4;0;23;1;3.5;3;0;0;0\n"
-        "NAGY Measurement Unit\n"
-        "1;0;20;1;2;3;100;0;0\n"
-        "2;0;20;1;2;3;110;0;0\n"
-        "Spectrum A\n"
-        "1;2;3\n",
+        "Meta;X\n"
+        "Measurement Values\n"
+        "stamp;plate;device;position;Y;;L*;;a*;;b*;;RT Glass;Resistance;Distance\n"
+        "2026-02-24 00:25:28;8345;Transmission;1;0;;20;;1;;2;;3;100;0\n"
+        "2026-02-24 00:25:29;8345;Transmission;2;0;;21;;1;;2.5;;3;110;0\n"
+        "2026-02-24 00:25:30;8345;NAGY Measurement Unit;3;0;;22;;1;;3;;3;120;0\n"
+        "Spectrum\n"
+        "x;y;z\n",
         encoding="utf-8",
     )
     rows, meta = parse_optoplex_file(p, DEFAULT_DEVICE_MAP)
-    assert len(rows) == 8
+    assert len(rows) == 3
     summary = build_optics_summary(rows, meta["event_time"])[0]
     assert "T_b_edge_center_delta" in summary
-    assert summary["NAGY_resistance_mean"] == 105
+    assert summary["NAGY_resistance_mean"] == 120
 
 
 def test_matching():
@@ -132,15 +128,17 @@ def test_run_once_extracts_real_rows(tmp_path: Path):
     process_file = proc_dir / "20260224002703_8345_glassFile.csv"
     process_file.write_text(
         "glassId;Location;status;nomPower;actPower;nomCurrent;actCurrent;nomVoltage;actVoltage;actVacuumPressure;nomMainGas1;actMainGas1;nomMainGas2;actMainGas2;nomMainGas3;actMainGas3;nomRampGas1;actRampGas1;nomRampGas2;actRampGas2;nomRampGas3;actRampGas3;nomGasSegment;nomSegGasType;Seg1;Seg2;Seg3;Seg4;Seg5;product\n"
-        "8345;1;on;10;12;5;5.5;100;99;0.003;1;1.1;2;2.2;3;3.3;0.5;0.4;0.2;0.1;0.3;0.2;5;O2;1;2;3;4;5;P1\n",
+        "8345;Compartment-1;on;10;12;5;5.5;100;99;0.003;1;1.1;2;2.2;3;3.3;0.5;0.4;0.2;0.1;0.3;0.2;5;O2;1;2;3;4;5;P1\n",
         encoding="utf-8",
     )
 
     opt_file = opt_dir / "2026-02-24-00-25-28_Plate-8345.csv"
     opt_file.write_text(
-        "Transmission\n"
-        "1;0;20;1;2;3;0;0;0\n"
-        "2;0;21;1;2.5;3;0;0;0\n",
+        "Measurement Values\n"
+        "stamp;plate;device;position;Y;;L*;;a*;;b*;;RT Glass;Resistance;Distance\n"
+        "2026-02-24 00:25:28;8345;Transmission;1;0;;20;;1;;2;;3;100;0\n"
+        "2026-02-24 00:25:29;8345;Transmission;2;0;;21;;1;;2.5;;3;110;0\n"
+        "Spectrum\n",
         encoding="utf-8",
     )
 
@@ -182,7 +180,7 @@ def test_failed_file_not_marked_ingested_and_next_file_continues(tmp_path: Path)
     bad.write_text("broken;csv\n", encoding="utf-8")
 
     good = opt_dir / "2026-02-24-00-25-28_Plate-8345.csv"
-    good.write_text("Transmission\n1;0;20;1;2;3;0;0;0\n", encoding="utf-8")
+    good.write_text("Measurement Values\nstamp;plate;device;position;Y;;L*;;a*;;b*;;RT Glass;Resistance;Distance\n2026-02-24 00:25:28;8345;Transmission;1;0;;20;;1;;2;;3;100;0\nSpectrum\n", encoding="utf-8")
 
     cfg = LiveDBConfig(
         optoplex_dir=tmp_path / "optoplex",

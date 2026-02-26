@@ -20,6 +20,15 @@ def infer_process_file_time(path: Path) -> datetime | None:
     return datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
 
 
+def _parse_location(value: str | None) -> tuple[str, int]:
+    raw = str(value or "").strip()
+    m = re.search(r"(\d+)", raw)
+    if m:
+        return raw, int(m.group(1))
+    as_num = parse_float(raw)
+    return raw, int(as_num or 0)
+
+
 def parse_process_file(path: Path) -> tuple[list[dict], dict]:
     rows = _read_csv_rows(path)
     process_time = infer_process_file_time(path)
@@ -29,7 +38,7 @@ def parse_process_file(path: Path) -> tuple[list[dict], dict]:
         rec["row_idx"] = idx
         rec["event_time"] = process_time
         rec["plate"] = str(row.get("glassId", "")).strip()
-        rec["Location"] = int(parse_float(row.get("Location")) or 0)
+        rec["location_raw"], rec["Location"] = _parse_location(row.get("Location"))
         rec["active"] = str(row.get("status", "")).strip().lower() not in {"off", "0", "false"}
 
         for metric in ["Power", "Current", "Voltage", "ProcessSpeed"]:
