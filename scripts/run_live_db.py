@@ -23,7 +23,7 @@ UPSERT_KEYS = {
     "file_registry": ["full_path"],
     "ingested_files": ["file_path"],
     "pairing_log": ["plate", "event_time", "optoplex_file_time", "pair_status"],
-    "raw_process_long": ["plate", "event_time", "Location"],
+    "raw_process_long": ["plate", "event_time", "Location", "row_idx"],
     "raw_optoplex_long": ["plate", "stamp", "device_norm", "position"],
     "plate_core": ["plate", "event_time"],
     "optics_summary": ["plate", "event_time"],
@@ -131,8 +131,23 @@ def log_pairing(store: DuckStore, plate: str, event_time: datetime | None, optop
     )
 
 
+
+
+def dedupe_rows(rows: list[dict], key_cols: list[str]) -> list[dict]:
+    seen = set()
+    out = []
+    for r in rows:
+        key = tuple(r.get(k) for k in key_cols)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
+
 def process_process_file(store: DuckStore, cfg: LiveDBConfig, path: Path, metrics: dict):
     rows, core = parse_process_file(path)
+    rows = dedupe_rows(rows, UPSERT_KEYS["raw_process_long"])
     vr = validate_process_rows(rows, cfg.required_columns)
     if not vr.ok:
         raise ValueError("; ".join(vr.errors))
@@ -245,63 +260,71 @@ def run_once(cfg: LiveDBConfig, current_date: date):
     run_id = store.start_run()
     metrics = {"files_seen": 0, "files_processed": 0, "files_failed": 0, "rows_written": 0, "pending_unmatched_count": 0}
     try:
-        with store.tx():
-            process_folder = today_folder(cfg.process_dir, current_date)
-            optoplex_folder = today_folder(cfg.optoplex_dir, current_date)
+        process_folder = today_folder(cfg.process_dir, current_date)
+        optoplex_folder = today_folder(cfg.optoplex_dir, current_date)
 
-            proc = list_candidate_files(process_folder, "*_glassFile.csv") if process_folder.exists() else []
-            opt = list_candidate_files(optoplex_folder, "*_Plate-*.csv") if optoplex_folder.exists() else []
+        proc = list_candidate_files(process_folder, "*_glassFile.csv") if process_folder.exists() else []
+        opt = list_candidate_files(optoplex_folder, "*_Plate-*.csv") if optoplex_folder.exists() else []
 
-            if not process_folder.exists():
-                logging.info("No folder for today yet. %s", process_folder)
-            if not optoplex_folder.exists():
-                logging.info("No folder for today yet. %s", optoplex_folder)
+        if not process_folder.exists():
+            logging.info("No folder for today yet. %s", process_folder)
+        if not optoplex_folder.exists():
+            logging.info("No folder for today yet. %s", optoplex_folder)
 
-            all_files = [("process", p) for p in proc] + [("optoplex", p) for p in opt]
-            metrics["files_seen"] = len(all_files)
+        all_files = [("process", p) for p in proc] + [("optoplex", p) for p in opt]
+        metrics["files_seen"] = len(all_files)
 
-            for typ, path in all_files:
-                if not is_file_complete(path):
-                    continue
-                if not should_process_file(store, path):
-                    continue
+        for typ, path in all_files:
+            if not is_file_complete(path):
+                continue
+            if not should_process_file(store, path):
+                continue
 
-                ok = False
-                err = None
-                for _ in range(cfg.max_retries):
-                    try:
+            ok = False
+            err = None
+            for _ in range(cfg.max_retries):
+                try:
+                    with store.tx():
                         if typ == "process":
                             process_process_file(store, cfg, path, metrics)
                         else:
                             process_optoplex_file(store, cfg, path, metrics)
-                        ok = True
-                        break
-                    except Exception as exc:
-                        err = str(exc)
-                        logging.exception("Failed parsing %s", path)
-                        time.sleep(0.1)
-                status = "processed" if ok else "failed"
-                store.upsert_rows(
-                    "file_registry",
-                    [{
-                        "full_path": str(path),
-                        "file_type": typ,
-                        "file_size": path.stat().st_size,
-                        "file_mtime": datetime.fromtimestamp(path.stat().st_mtime),
-                        "status": status,
-                        "error_text": err,
-                        "processed_at": datetime.utcnow(),
-                    }],
-                    UPSERT_KEYS["file_registry"],
-                )
-                mark_ingested_file(store, path)
-                if ok:
-                    metrics["files_processed"] += 1
-                    move_file(path, cfg.archive_dir, "processed")
-                else:
-                    metrics["files_failed"] += 1
-                    move_file(path, cfg.archive_dir, "failed")
+                    ok = True
+                    break
+                except Exception as exc:
+                    err = str(exc)
+                    logging.exception("Failed parsing %s", path)
+                    time.sleep(0.1)
 
+            status = "processed" if ok else "failed"
+            try:
+                with store.tx():
+                    store.upsert_rows(
+                        "file_registry",
+                        [{
+                            "full_path": str(path),
+                            "file_type": typ,
+                            "file_size": path.stat().st_size,
+                            "file_mtime": datetime.fromtimestamp(path.stat().st_mtime),
+                            "status": status,
+                            "error_text": err,
+                            "processed_at": datetime.utcnow(),
+                        }],
+                        UPSERT_KEYS["file_registry"],
+                    )
+                    if ok:
+                        mark_ingested_file(store, path)
+            except Exception:
+                logging.exception("Failed to update registry state for %s", path)
+
+            if ok:
+                metrics["files_processed"] += 1
+                move_file(path, cfg.archive_dir, "processed")
+            else:
+                metrics["files_failed"] += 1
+                move_file(path, cfg.archive_dir, "failed")
+
+        with store.tx():
             expire_unmatched(store)
             metrics["pending_unmatched_count"] = store.conn.execute("SELECT count(*) FROM plate_core WHERE pair_status IN ('process_only','color_only')").fetchone()[0]
 

@@ -24,8 +24,9 @@ def parse_process_file(path: Path) -> tuple[list[dict], dict]:
     rows = _read_csv_rows(path)
     process_time = infer_process_file_time(path)
     normalized: list[dict] = []
-    for row in rows:
+    for idx, row in enumerate(rows, start=1):
         rec = dict(row)
+        rec["row_idx"] = idx
         rec["event_time"] = process_time
         rec["plate"] = str(row.get("glassId", "")).strip()
         rec["Location"] = int(parse_float(row.get("Location")) or 0)

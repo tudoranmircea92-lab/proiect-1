@@ -12,7 +12,7 @@ from live_db.parse_optoplex import parse_optoplex_file
 from live_db.parse_process import parse_process_file
 from live_db.store import DuckStore
 from live_db.config import LiveDBConfig
-from scripts.run_live_db import create_or_replace_training_view, run_once, should_process_file, today_folder, validate_db_path
+from scripts.run_live_db import create_or_replace_training_view, dedupe_rows, run_once, should_process_file, today_folder, validate_db_path
 
 
 def test_parse_process_and_segments(tmp_path: Path):
@@ -157,4 +157,45 @@ def test_run_once_extracts_real_rows(tmp_path: Path):
     plate = db.conn.execute("select has_process, process_source_file from plate_core where plate='8345' limit 1").fetchone()
     assert plate[0] is True
     assert str(process_file) in plate[1]
+    db.close()
+
+
+def test_dedupe_rows_on_raw_process_key():
+    rows = [
+        {"plate": "1", "event_time": datetime(2026, 1, 1), "Location": 0, "row_idx": 1, "x": 1},
+        {"plate": "1", "event_time": datetime(2026, 1, 1), "Location": 0, "row_idx": 1, "x": 2},
+        {"plate": "1", "event_time": datetime(2026, 1, 1), "Location": 0, "row_idx": 2, "x": 3},
+    ]
+    out = dedupe_rows(rows, ["plate", "event_time", "Location", "row_idx"])
+    assert len(out) == 2
+
+
+def test_failed_file_not_marked_ingested_and_next_file_continues(tmp_path: Path):
+    today = date.today()
+    proc_dir = tmp_path / "process" / f"{today.year:04d}" / f"{today.month:02d}" / f"{today.day:02d}"
+    opt_dir = tmp_path / "optoplex" / f"{today.year:04d}" / f"{today.month:02d}" / f"{today.day:02d}"
+    proc_dir.mkdir(parents=True)
+    opt_dir.mkdir(parents=True)
+
+    bad = proc_dir / "20260224002703_8345_glassFile.csv"
+    bad.write_text("broken;csv\n", encoding="utf-8")
+
+    good = opt_dir / "2026-02-24-00-25-28_Plate-8345.csv"
+    good.write_text("Transmission\n1;0;20;1;2;3;0;0;0\n", encoding="utf-8")
+
+    cfg = LiveDBConfig(
+        optoplex_dir=tmp_path / "optoplex",
+        process_dir=tmp_path / "process",
+        db_path=tmp_path / "cont.duckdb",
+        one_shot=True,
+    )
+    run_once(cfg, today)
+
+    db = DuckStore(tmp_path / "cont.duckdb")
+    failed_status = db.conn.execute("select status from file_registry where full_path=?", [str(bad)]).fetchone()[0]
+    assert failed_status == "failed"
+    bad_mark = db.conn.execute("select count(*) from ingested_files where file_path=?", [str(bad)]).fetchone()[0]
+    assert bad_mark == 0
+    good_mark = db.conn.execute("select count(*) from ingested_files where file_path=?", [str(good)]).fetchone()[0]
+    assert good_mark == 1
     db.close()
