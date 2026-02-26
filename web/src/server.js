@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 
@@ -30,6 +31,49 @@ app.get('/api/status', (_req, res) => {
   });
 });
 
+app.get('/api/browse', async (req, res) => {
+  const requestedPath = String(req.query.path || '').trim();
+  const browsePath = requestedPath || process.cwd();
+  try {
+    const entries = await fs.readdir(browsePath, { withFileTypes: true });
+    const items = await Promise.all(entries.map(async (entry) => {
+      const fullPath = path.join(browsePath, entry.name);
+      try {
+        const stat = await fs.stat(fullPath);
+        return {
+          name: entry.name,
+          path: fullPath,
+          isDirectory: entry.isDirectory(),
+          isFile: entry.isFile(),
+          mtime: stat.mtime.toISOString()
+        };
+      } catch {
+        return {
+          name: entry.name,
+          path: fullPath,
+          isDirectory: entry.isDirectory(),
+          isFile: entry.isFile(),
+          mtime: null
+        };
+      }
+    }));
+
+    res.json({
+      ok: true,
+      path: browsePath,
+      parent: path.dirname(browsePath),
+      items: items.sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name))
+    });
+  } catch (error) {
+    res.status(200).json({
+      ok: false,
+      path: browsePath,
+      error: error?.message || 'Unable to browse path',
+      items: []
+    });
+  }
+});
+
 app.post('/api/start', (req, res) => {
   if (liveProcess) {
     return res.status(400).json({ error: 'Pipeline already running.' });
@@ -52,7 +96,7 @@ app.post('/api/start', (req, res) => {
   }
 
   const args = [
-    'scripts/run_live_db.py',
+    '-m', 'scripts.run_live_db',
     '--optoplex-dir', optoplexDir,
     '--process-dir', processDir,
     '--db-path', dbPath,

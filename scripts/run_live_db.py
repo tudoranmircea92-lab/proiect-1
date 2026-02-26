@@ -5,7 +5,7 @@ import argparse
 import logging
 import shutil
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from live_db.build_model import build_model_features, build_model_targets
@@ -21,6 +21,7 @@ from live_db.watch import acquire_lock, is_file_complete, list_candidate_files, 
 
 UPSERT_KEYS = {
     "file_registry": ["full_path"],
+    "ingested_files": ["file_path"],
     "raw_process_long": ["plate", "event_time", "Location"],
     "raw_optoplex_long": ["plate", "stamp", "device_norm", "position"],
     "plate_core": ["plate", "event_time"],
@@ -49,15 +50,47 @@ def move_file(path: Path, archive_dir: Path | None, bucket: str):
 
 
 def create_or_replace_training_view(store: DuckStore):
+    has_features = store.conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='model_features_plate'").fetchone()[0] > 0
+    has_targets = store.conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='model_targets_plate'").fetchone()[0] > 0
+    if not (has_features and has_targets):
+        return
     store.conn.execute(
         """
-        CREATE VIEW IF NOT EXISTS model_training_color AS
+        CREATE OR REPLACE VIEW model_training_color AS
         SELECT f.*, t.target_T_L_mean, t.target_T_a_mean, t.target_T_b_mean, t.target_T_RT_mean,
                t.target_T_b_std, t.target_T_b_edge_center_delta, t.target_T_b_left_right_delta,
                t.target_T_uniformity_score, t.target_NAGY_resistance_mean
         FROM model_features_plate f
         JOIN model_targets_plate t USING(plate, event_time)
         """
+    )
+
+
+def validate_db_path(db_path: Path):
+    if db_path.exists() and db_path.is_dir():
+        raise ValueError(f"Invalid --db-path '{db_path}': expected a DuckDB file path, got directory.")
+    if db_path.suffix.lower() != ".duckdb":
+        raise ValueError(f"Invalid --db-path '{db_path}': must end with .duckdb")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def today_folder(base: Path, current_date: date) -> Path:
+    return base / f"{current_date.year:04d}" / f"{current_date.month:02d}" / f"{current_date.day:02d}"
+
+
+def should_process_file(store: DuckStore, path: Path) -> bool:
+    mtime = datetime.fromtimestamp(path.stat().st_mtime)
+    row = store.conn.execute("SELECT file_mtime FROM ingested_files WHERE file_path=?", [str(path)]).fetchone()
+    if not row:
+        return True
+    return row[0] != mtime
+
+
+def mark_ingested_file(store: DuckStore, path: Path):
+    store.upsert_rows(
+        "ingested_files",
+        [{"file_path": str(path), "file_mtime": datetime.fromtimestamp(path.stat().st_mtime), "ingested_at": datetime.utcnow()}],
+        UPSERT_KEYS["ingested_files"],
     )
 
 
@@ -87,8 +120,7 @@ def process_process_file(store: DuckStore, cfg: LiveDBConfig, path: Path, metric
     store.upsert_rows("risk_summary", risk, UPSERT_KEYS["risk_summary"])
     store.upsert_rows("model_features_plate", feats, UPSERT_KEYS["model_features_plate"])
 
-    # delayed match from orphan colors
-    orphans = store.conn.execute("SELECT plate, optoplex_file_time, full_path FROM orphan_optoplex WHERE status='pending' AND plate=?", [core["plate"]]).fetchall()
+    orphans = store.conn.execute("SELECT plate, optoplex_file_time FROM orphan_optoplex WHERE status='pending' AND plate=?", [core["plate"]]).fetchall()
     if orphans:
         color_candidates = [{"event_time": core["event_time"], "plate": core["plate"]}]
         best = choose_best_process_candidate(color_candidates, orphans[0][1])
@@ -149,24 +181,33 @@ def expire_unmatched(store: DuckStore):
     )
 
 
-def run_once(cfg: LiveDBConfig):
+def run_once(cfg: LiveDBConfig, current_date: date):
     store = DuckStore(cfg.db_path)
     create_or_replace_training_view(store)
     run_id = store.start_run()
     metrics = {"files_seen": 0, "files_processed": 0, "files_failed": 0, "rows_written": 0, "pending_unmatched_count": 0}
     try:
         with store.tx():
-            proc = list_candidate_files(cfg.process_dir, "*_glassFile.csv")
-            opt = list_candidate_files(cfg.optoplex_dir, "*_Plate-*.csv")
+            process_folder = today_folder(cfg.process_dir, current_date)
+            optoplex_folder = today_folder(cfg.optoplex_dir, current_date)
+
+            proc = list_candidate_files(process_folder, "*_glassFile.csv") if process_folder.exists() else []
+            opt = list_candidate_files(optoplex_folder, "*_Plate-*.csv") if optoplex_folder.exists() else []
+
+            if not process_folder.exists():
+                logging.info("No folder for today yet. %s", process_folder)
+            if not optoplex_folder.exists():
+                logging.info("No folder for today yet. %s", optoplex_folder)
+
             all_files = [("process", p) for p in proc] + [("optoplex", p) for p in opt]
             metrics["files_seen"] = len(all_files)
 
             for typ, path in all_files:
                 if not is_file_complete(path):
                     continue
-                already = store.conn.execute("SELECT 1 FROM file_registry WHERE full_path=? AND status='processed'", [str(path)]).fetchone()
-                if already:
+                if not should_process_file(store, path):
                     continue
+
                 ok = False
                 err = None
                 for _ in range(cfg.max_retries):
@@ -195,6 +236,7 @@ def run_once(cfg: LiveDBConfig):
                     }],
                     UPSERT_KEYS["file_registry"],
                 )
+                mark_ingested_file(store, path)
                 if ok:
                     metrics["files_processed"] += 1
                     move_file(path, cfg.archive_dir, "processed")
@@ -240,16 +282,22 @@ def parse_args() -> LiveDBConfig:
 
 def main():
     cfg = parse_args()
+    validate_db_path(cfg.db_path)
     setup_logging(cfg.log_file)
     lock_file = cfg.db_path.with_suffix(".lock")
     if not acquire_lock(lock_file):
         raise SystemExit("Another instance is already running.")
     try:
         if cfg.one_shot:
-            run_once(cfg)
+            run_once(cfg, date.today())
             return
+        active_date = date.today()
         while True:
-            run_once(cfg)
+            current = date.today()
+            if current != active_date:
+                active_date = current
+                logging.info("Date rollover detected, switching to folder date: %s", active_date.isoformat())
+            run_once(cfg, active_date)
             time.sleep(cfg.poll_seconds)
     finally:
         release_lock(lock_file)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
+
+import pytest
 
 from live_db.build_operational import build_compartment_state, build_optics_summary
 from live_db.config import DEFAULT_DEVICE_MAP, DEFAULT_GAS_MAP, DEFAULT_MATERIAL_MAP, DEFAULT_ZONE_MAP
@@ -9,6 +11,7 @@ from live_db.pairing import choose_best_process_candidate
 from live_db.parse_optoplex import parse_optoplex_file
 from live_db.parse_process import parse_process_file
 from live_db.store import DuckStore
+from scripts.run_live_db import create_or_replace_training_view, should_process_file, today_folder, validate_db_path
 
 
 def test_parse_process_and_segments(tmp_path: Path):
@@ -74,3 +77,31 @@ def test_compartment_aggregation():
              "nomRampGas1":1,"actRampGas1":1,"deltaRampGas1":0,"nomRampGas2":1,"actRampGas2":1,"deltaRampGas2":0,"nomRampGas3":1,"actRampGas3":1,"deltaRampGas3":0}]
     comp = build_compartment_state(rows, DEFAULT_ZONE_MAP["default"], DEFAULT_MATERIAL_MAP, DEFAULT_GAS_MAP)
     assert comp[0]["seg_gas_family"] == "reactive_oxidation"
+
+
+def test_training_view_no_crash_on_empty_db(tmp_path: Path):
+    db = DuckStore(tmp_path / "empty.duckdb")
+    create_or_replace_training_view(db)
+    db.close()
+
+
+def test_validate_db_path(tmp_path: Path):
+    with pytest.raises(ValueError):
+        validate_db_path(tmp_path)
+    validate_db_path(tmp_path / "ok.duckdb")
+
+
+def test_today_folder_and_ingested_files(tmp_path: Path):
+    base = tmp_path / "root"
+    t = today_folder(base, date(2026, 2, 26))
+    assert str(t).endswith("2026/02/26")
+
+    db = DuckStore(tmp_path / "z.duckdb")
+    f = tmp_path / "x.csv"
+    f.write_text("a", encoding="utf-8")
+    assert should_process_file(db, f) is True
+    db.upsert_rows("ingested_files", [{"file_path": str(f), "file_mtime": datetime.fromtimestamp(f.stat().st_mtime), "ingested_at": datetime.utcnow()}], ["file_path"])
+    assert should_process_file(db, f) is False
+    f.write_text("b", encoding="utf-8")
+    assert should_process_file(db, f) is True
+    db.close()

@@ -78,6 +78,11 @@ class DuckStore:
                 pending_unmatched_count BIGINT,
                 error_text VARCHAR
             );
+            CREATE TABLE IF NOT EXISTS ingested_files (
+                file_path VARCHAR PRIMARY KEY,
+                file_mtime TIMESTAMP,
+                ingested_at TIMESTAMP
+            );
             """
         )
 

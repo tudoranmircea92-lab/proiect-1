@@ -8,16 +8,18 @@
     body { font-family: Arial, sans-serif; margin: 0; background:#0f172a; color:#e2e8f0; }
     header { padding: 16px 20px; border-bottom: 1px solid #1e293b; }
     .tabs { display:flex; gap:8px; padding: 12px 20px; border-bottom:1px solid #1e293b; }
-    .tab { padding:10px 14px; border:1px solid #334155; border-radius:8px; background:#111827; color:#93c5fd; cursor:pointer; }
+    .tab { padding:10px 14px; border:1px solid #334155; border-radius:8px; background:#111827; color:#93c5fd; }
     .tab.active { background:#1d4ed8; color:white; }
     .container { padding:20px; max-width:980px; }
     .panel { background:#111827; border:1px solid #334155; border-radius:10px; padding:16px; }
     label { display:block; margin:10px 0 4px; }
     input { width:100%; padding:8px; border-radius:6px; border:1px solid #475569; background:#0b1220; color:#e2e8f0; }
     .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .field-row { display:grid; grid-template-columns:1fr 120px; gap:8px; align-items:center; }
     button { margin-top:14px; margin-right:8px; padding:10px 14px; border:0; border-radius:8px; cursor:pointer; }
     .start { background:#22c55e; color:#04110a; }
     .stop { background:#ef4444; color:white; }
+    .browse { background:#334155; color:#e2e8f0; margin-top:0; }
     pre { background:#020617; border:1px solid #334155; border-radius:8px; padding:10px; max-height:300px; overflow:auto; }
     .muted { color:#94a3b8; }
   </style>
@@ -41,13 +43,13 @@
       <input id="pythonExe" value="python" />
 
       <label>Optoplex directory</label>
-      <input id="optoplexDir" placeholder="D:\\optoplex" />
+      <div class="field-row"><input id="optoplexDir" placeholder="D:\\optoplex" /><button class="browse" onclick="browsePath('optoplexDir', true)">Browse</button></div>
 
       <label>Process directory</label>
-      <input id="processDir" placeholder="D:\\process" />
+      <div class="field-row"><input id="processDir" placeholder="D:\\process" /><button class="browse" onclick="browsePath('processDir', true)">Browse</button></div>
 
       <label>DuckDB path</label>
-      <input id="dbPath" placeholder="D:\\data\\coater.duckdb" />
+      <div class="field-row"><input id="dbPath" placeholder="D:\\data\\coater.duckdb" /><button class="browse" onclick="browsePath('dbPath', false)">Browse</button></div>
 
       <div class="row">
         <div>
@@ -61,10 +63,10 @@
       </div>
 
       <label>Archive directory (optional)</label>
-      <input id="archiveDir" placeholder="D:\\archive" />
+      <div class="field-row"><input id="archiveDir" placeholder="D:\\archive" /><button class="browse" onclick="browsePath('archiveDir', true)">Browse</button></div>
 
       <label>Log file (optional)</label>
-      <input id="logFile" placeholder="D:\\logs\\live_db.log" />
+      <div class="field-row"><input id="logFile" placeholder="D:\\logs\\live_db.log" /><button class="browse" onclick="browsePath('logFile', false)">Browse</button></div>
 
       <label>One shot (true/false)</label>
       <input id="oneShot" value="false" />
@@ -85,6 +87,46 @@
       const s = await r.json();
       document.getElementById('status').innerText = `Status: ${s.running ? 'RUNNING' : 'STOPPED'} ${s.pid ? `(pid=${s.pid})` : ''}`;
       document.getElementById('logs').textContent = (s.logs || []).join('\n');
+    }
+
+    async function browsePath(targetInputId, directoriesOnly) {
+      let currentPath = document.getElementById(targetInputId).value || '';
+      while (true) {
+        const r = await fetch(`/api/browse?path=${encodeURIComponent(currentPath)}`);
+        const data = await r.json();
+        if (!data.ok) {
+          alert(`Browse error: ${data.error}`);
+          return;
+        }
+
+        const filtered = data.items.filter(i => directoriesOnly ? i.isDirectory : (i.isDirectory || i.isFile));
+        const lines = filtered.slice(0, 50).map((i, idx) => `${idx + 1}. ${i.isDirectory ? '[DIR]' : '[FILE]'} ${i.name}`);
+        const promptText = `Current: ${data.path}\nChoose number, '..' for parent, '.' to select current, or full path:\n\n${lines.join('\n')}`;
+        const choice = prompt(promptText, '.');
+        if (choice === null) return;
+        const input = choice.trim();
+
+        if (input === '.') {
+          document.getElementById(targetInputId).value = data.path;
+          return;
+        }
+        if (input === '..') {
+          currentPath = data.parent || data.path;
+          continue;
+        }
+        if (/^\d+$/.test(input)) {
+          const sel = filtered[Number(input) - 1];
+          if (!sel) continue;
+          if (sel.isDirectory) {
+            currentPath = sel.path;
+            continue;
+          }
+          document.getElementById(targetInputId).value = sel.path;
+          return;
+        }
+        document.getElementById(targetInputId).value = input;
+        return;
+      }
     }
 
     async function startRun() {
