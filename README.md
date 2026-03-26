@@ -151,3 +151,22 @@ FROM pairing_log
 ORDER BY updated_at DESC
 LIMIT 20;
 ```
+
+## 12) Streamlit analysis app (engineering workflow)
+
+This repository now includes a modular Streamlit analysis app (not a monolithic file):
+
+- `adapters/` for process, Optoplex, Lambda950 parsers
+- `analytics/` for color/process features, baselines, compare, RCA heuristics
+- `services/` for manifest, linking, cache, monitoring
+- `ui/` pages for Search, Plate, Compare, Monitor
+- `app.py` as entrypoint
+
+Run locally:
+
+```bash
+pip install streamlit
+streamlit run app.py
+```
+
+Default local cache path for lightweight per-file cache metadata is `C:/db/cache_fast`.
